@@ -1,3 +1,3 @@
 # COVIDCAT-Evolution
 
-Repository with local copies of the final project of my master thesis
+Repository with local weekly copies of the final project of my master thesis
