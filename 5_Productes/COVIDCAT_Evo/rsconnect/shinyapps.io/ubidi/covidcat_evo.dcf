@@ -1,0 +1,11 @@
+name: covidcat_evo
+title:
+username:
+account: ubidi
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6270617
+bundleId: 6938020
+url: https://ubidi.shinyapps.io/covidcat_evo/
+when: 1678388517.443
+lastSyncTime: 1678388517.443
