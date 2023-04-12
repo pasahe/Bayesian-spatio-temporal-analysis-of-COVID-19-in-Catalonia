@@ -241,9 +241,6 @@ dat_hosp <- dat_hosp %>%
          codi_abs = ifelse(codi_abs == "399", "149", codi_abs)
   )
 
-#Get socioeconomic index by each ABS:
-dat_se <- dat_hosp %>% 
-  
 
 #Group data by: sex, age, abs. The socioeconomic index is the same for each of the ABS so we won't group because we can add it later
 #We discard the population column (we will get the population with another file)
@@ -304,6 +301,10 @@ dat_vac <- dat_vac %>%
 #2022 ABS have some discordances with the ABS in the data, we will not use it
 #The 2018 ABS has few discordances. Only Montcada i Reixac - 1 and Montcada i Reixac - 2 are in the shapefileT and not in the incidence database, because they were MONTCADA I REIXAC one unique ABS.
 shapefileT <- rgdal::readOGR(file.path(dades,"ABS_2018/ABS_2018.shp"), stringsAsFactors = FALSE, encoding = "UTF-8",use_iconv = T)
+
+#Name of àrea column:
+shapefileT@data <- shapefileT@data %>% 
+  rename("area"="NA.")
 
 #Read it without encoding to keep the name of the health region:
 NOMRS <- rgdal::readOGR(file.path(dades,"ABS_2018/ABS_2018.shp"), stringsAsFactors = FALSE)@data %>% 
@@ -380,7 +381,6 @@ dat_rs <- tibble(NOMRS = c("Alt Pirineu i Aran", "Barcelona", "Camp de Tarragona
 shapefileT@data <- shapefileT@data %>% 
   left_join(dat_rs, by = c("NOMRS"))
 
-
 #Save data for analysis
 save(pob_abs, file = file.path(dades_ana, "pob_abs.Rda"))
 
@@ -402,52 +402,52 @@ save(shapefileT, file = "5_Productes/COVIDCAT_Evo/shapefileT.Rda")
 
 #Extra data for analysis:
 
-# #Socieconomic data by ABS (http://observatorisalut.gencat.cat/ca/observatori-desigualtats-salut/indicadors_comunitaria/)
-# #We have to categorize the synthetic score to be able to interpet it. We will follow the described categories in the page 18 of https://observatorisalut.gencat.cat/web/.content/minisite/observatorisalut/observatori_desigualtats/comunitaria/guia_informe_salut_abs_indicadors_octubre2021.pdf:
-# # "Per a l’anàlisi de resultats s’han definit 6 categories de nivell socioeconòmic segons
-# # el valor de l’IST: molt baix (menor de 75), baix (de 75 a 90), mitjà baix (de 90 a 100), mitjà alt
-# # (de 100 a 110), alt (de 110 a 125) i molt alt (major de 125)."
-# 
-# #- Year: 2018
-# #- We have several indicators by ABS. We are interested only in the socieconomic index
-# 
-# dat_se <- read_excel(file.path(dades, "Extra/Indicadors_ABS_format-pla_2018.xlsx")) %>%
-#   filter(Indicador == "Índex socioeconòmic territorial 2018 (ABS)") %>%
-#   dplyr::select("codi_abs" = "Codi ABS", "index_socioeconomic" = "ABS total") %>%
-#   mutate(index_socioeconomic = as.numeric(index_socioeconomic),
-#          codi_abs = case_when(
-#            codi_abs < 10 ~ str_glue("00{codi_abs}"),
-#            codi_abs < 100 ~ str_glue("0{codi_abs}"),
-#            TRUE ~ str_glue("{codi_abs}")
-#          ),
-#          #Put Montcada i Reixac - 1 and Montcada i Reixac - 2 as Montcada i Reixac
-#          codi_abs = ifelse(codi_abs %in% c("381", "382"), "302", codi_abs),
-#          #Put Castellbisbal to Martorell
-#          codi_abs = ifelse(codi_abs %in% "399", "149", codi_abs),
-#   ) %>%
-#   #There're some codi_abs that is not from 2018 and we don't have the se. Also, there is one ABS that we don't have the shapefile (057 - Barcelona 8A) and also the total of Catalonia
-#   filter(!is.na(index_socioeconomic), !is.na(codi_abs), codi_abs != "057") %>%
-#   group_by(codi_abs) %>%
-#   #Mean of the ABS that have been unified (Montcada i Reixac and Castellbisbal with Martorell)
-#   mutate(
-#     index_socioeconomic = mean(index_socioeconomic, na.rm = TRUE)
-#   ) %>%
-#   ungroup() %>% 
-#   #Categorize it
-#   mutate(
-#     index_socioeconomic_cat = case_when(
-#       index_socioeconomic < 75 ~ 1,
-#       index_socioeconomic < 90 ~ 2,
-#       index_socioeconomic < 100 ~ 3,
-#       index_socioeconomic < 110 ~ 4,
-#       index_socioeconomic < 125 ~ 5,
-#       TRUE ~ 6
-#     ),
-#     index_socioeconomic_cat = factor(index_socioeconomic_cat, levels = 1:6, labels = c("Very low", "Low", "Middle low", "Middle high", "High", "Very high"))
-#   )
-# 
-# save(dat_se, file = file.path(dades_ana, "dat_se.Rda"))
-# save(dat_se, file = "5_Productes/COVIDCAT_Evo/dat_se.Rda")
+#Socieconomic data by ABS (http://observatorisalut.gencat.cat/ca/observatori-desigualtats-salut/indicadors_comunitaria/)
+#We have to categorize the synthetic score to be able to interpet it. We will follow the described categories in the page 18 of https://observatorisalut.gencat.cat/web/.content/minisite/observatorisalut/observatori_desigualtats/comunitaria/guia_informe_salut_abs_indicadors_octubre2021.pdf:
+# "Per a l’anàlisi de resultats s’han definit 6 categories de nivell socioeconòmic segons
+# el valor de l’IST: molt baix (menor de 75), baix (de 75 a 90), mitjà baix (de 90 a 100), mitjà alt
+# (de 100 a 110), alt (de 110 a 125) i molt alt (major de 125)."
+
+#- Year: 2018
+#- We have several indicators by ABS. We are interested only in the socieconomic index
+
+dat_se <- read_excel(file.path(dades, "Extra/Indicadors_ABS_format-pla_2018.xlsx")) %>%
+  filter(Indicador == "Índex socioeconòmic territorial 2018 (ABS)") %>%
+  dplyr::select("codi_abs" = "Codi ABS", "index_socioeconomic" = "ABS total") %>%
+  mutate(index_socioeconomic = as.numeric(index_socioeconomic),
+         codi_abs = case_when(
+           codi_abs < 10 ~ str_glue("00{codi_abs}"),
+           codi_abs < 100 ~ str_glue("0{codi_abs}"),
+           TRUE ~ str_glue("{codi_abs}")
+         ),
+         #Put Montcada i Reixac - 1 and Montcada i Reixac - 2 as Montcada i Reixac
+         codi_abs = ifelse(codi_abs %in% c("381", "382"), "302", codi_abs),
+         #Put Castellbisbal to Martorell
+         codi_abs = ifelse(codi_abs %in% "399", "149", codi_abs),
+  ) %>%
+  #There're some codi_abs that is not from 2018 and we don't have the se. Also, there is one ABS that we don't have the shapefile (057 - Barcelona 8A) and also the total of Catalonia
+  filter(!is.na(index_socioeconomic), !is.na(codi_abs), codi_abs != "057") %>%
+  group_by(codi_abs) %>%
+  #Mean of the ABS that have been unified (Montcada i Reixac and Castellbisbal with Martorell)
+  summarise(
+    index_socioeconomic = mean(index_socioeconomic, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  #Categorize it
+  mutate(
+    index_socioeconomic_cat = case_when(
+      index_socioeconomic < 75 ~ 1,
+      index_socioeconomic < 90 ~ 2,
+      index_socioeconomic < 100 ~ 3,
+      index_socioeconomic < 110 ~ 4,
+      index_socioeconomic < 125 ~ 5,
+      TRUE ~ 6
+    ),
+    index_socioeconomic_cat = factor(index_socioeconomic_cat, levels = 1:6, labels = c("Very low", "Low", "Middle low", "Middle high", "High", "Very high"))
+  )
+
+save(dat_se, file = file.path(dades_ana, "dat_se.Rda"))
+save(dat_se, file = "5_Productes/COVIDCAT_Evo/dat_se.Rda")
 
 # #Mobility data by ABS for each month from March-November 2020 (https://flowmap.blue/1BORBjX0JHOycm5MeflAkTU6ZT2maS7X_ilXdgVCxF9E/5098cd4?v=41.389359%2C2.146799%2C10.93%2C0%2C0&a=1&as=1&b=1&bo=75&c=1&ca=1&d=1&fe=1&lt=1&lfm=ALL&col=DarkMint&f=50)
 # ndat_mobi <- tibble(mes = 3:11) %>% 
@@ -488,10 +488,10 @@ save(shapefileT, file = "5_Productes/COVIDCAT_Evo/shapefileT.Rda")
 #   #Remove those policies that might not be relevant
 #   filter(!PolicyType %in% c("H1: Public information campaigns"))
 
-#Let's read the created file with all the restrictions to place in the app 
-dat_rest <- read_excel(file.path(dades, "Extra/restrictions_CAT.xlsx")) %>% 
+#Let's read the created file with all the restrictions to place in the app
+dat_rest <- read_excel(file.path(dades, "Extra/restrictions_CAT.xlsx")) %>%
   #Filter those rows that at the moment we won't put
-  filter(!grepl("\\?$", Description)) %>% 
+  filter(!grepl("\\?$", Description)) %>%
   mutate(
     #Transform to date
     start = as_date(start),
@@ -515,8 +515,46 @@ dat_rest <- read_excel(file.path(dades, "Extra/restrictions_CAT.xlsx")) %>%
       type =="School" ~ '<i class="fa-solid fa-school"></i>',
       type =="Vaccine" ~ '<i class="fa-solid fa-syringe"></i>'
     )
-  ) %>% 
+  ) %>%
   dplyr::select(-start_wday, -sources, -...6)
 
 save(dat_rest, file = file.path(dades_ana, "dat_rest.Rda"))
 save(dat_rest, file = "5_Productes/COVIDCAT_Evo/dat_rest.Rda")
+
+#Percentage of population >65 years and population density per square kilometre of land area in each ABS
+# I didn't find any treshold levels for population density nor percentage of >65 years population so we will use rounded beautified quantile points to categorize them
+dat_demo <- read.csv(file.path(dades, "Registre_central_de_poblaci__del_CatSalut.csv"), encoding = "UTF-8") %>%
+  subset(any==2020) %>%
+  dplyr::select(codi_abs = "codi.Àrea.Bàsica.de.Saut", sexe="gènere", edat , N="població.oficial") %>% 
+  mutate(N_65 = ifelse(edat >= 65, N, 0)) %>%
+  group_by(codi_abs) %>% 
+  summarise(N_65 = sum(N_65),
+            N = sum(N)) %>% 
+  full_join(
+    shapefileT@data[,c("codi_abs", "area")],
+    by = "codi_abs"
+  ) %>% 
+  mutate(
+    #% 65 population:
+    perc_65 = N_65*100/N,
+    perc_65_cat = case_when(
+      perc_65 < 17 ~ 1,
+      perc_65 < 20 ~ 2,
+      perc_65 < 22 ~ 3,
+      TRUE ~ 4
+    ),
+    perc_65_cat = factor(perc_65_cat, levels = 1:4, labels = c("<17", "17-20", "20-22", ">22")),
+    #Density:
+    #m2 to km2
+    area = area/1000000,
+    dens = N/area,
+    dens_cat = case_when(
+      dens < 165 ~ 1,
+      dens < 1720 ~ 2,
+      dens < 15100 ~ 3,
+      TRUE ~ 4
+    ),
+    dens_cat = factor(dens_cat, levels = 1:4, labels = c("<165", "165-1720", "1720-15100",">15100"))
+  )
+save(dat_demo, file = file.path(dades_ana, "dat_demo.Rda"))
+save(dat_demo, file = "5_Productes/COVIDCAT_Evo/dat_demo.Rda")
