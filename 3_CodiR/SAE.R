@@ -10,6 +10,10 @@
 # https://coronavirus.data.gov.uk/
 #CAT dashboard
 # https://dadescovid.cat/
+#PandemonCAT
+# https://www.researchprojects.es/en/apps/pandemoncat
+#Government interventions and control policies to contain the first COVID-19 outbreak: An analysis of evidence
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9996153/
 
 #We will take a period of 7 days for the cumulative window period as we would like to show the evolution in every week. 7 days is the minimum we can take as for the hospitalization it's already given in a weekly basis. Also presenting the results weekly we have more random fluctuation so the need of a sae estimation method gains sense
 
@@ -65,87 +69,114 @@ Tdat_edat <- dat_edat %>%
 
 sf::sf_use_s2(FALSE)
 
-#Parameters to make INLA work
+#----------Spatial models-------------
+#Està bastant ben explicat la motivació de bym:
+# https://www.sciencedirect.com/science/article/pii/S0047259X12000589
+
+#Està molt ben explicat el bym:
+# http://www.stat.columbia.edu/~gelman/research/published/bym_article_SSTEproof.pdf
+
+#Model: y_i ~ Poiss(n_i*theta_i); log(theta_i) ~ beta0 + b_i
+# The random effect b_i follows a BYM model that includes an ICAR (Intrinsic Conditional Auto-Regressive model) component for spatial auto-correlation and an ordinary random-effect component for non-spatial heterogenity:
+#(Specific formulation from https://sci-hub.st/10.1002/sim.4780142111)
+# b_i = u_i + v_i, where:
+#u_i|u ~ N(W_u, 1/theta_u*n_i), where W_u is the weighted sum of the u_j of the adjacent neighbors
+#v_i ~ N(0, 1/theta_v)
+
+#We choose prior distributions for the logarithm of the hyperparameters of the distribution, this is log(theta_u) and log(theta_v). By default they are a loggamma distribution, that we can see in the inla documentation of the bym model (loggamma(1, 0.0005)) https://inla.r-inla-download.org/r-inla.org/doc/latent/bym.pdf
+#But this distribution (the inverse-gamma, i.e gamma for the 1/X) is not recommended (Andrew Gelman, http://www.stat.columbia.edu/~gelman/research/published/taumain.pdf), because when the parameter is estimated to be closed to zero the resulting inferences will be sensitive. It's recommended a standard uniform distribution that we can define, by:
+# sdunif = "expression: logdens=log(0.5)-log_precision/2; return(logdens);"
+sdunif = "expression: logdens=-log_precision/2; return(logdens);"
+#Adin Urtasun, https://academica-e.unavarra.es/bitstream/handle/2454/27572/Adin%20Urtasun%20Tesis%20MA.pdf?sequence=1&isAllowed=y
+
+#BYM2: https://arxiv.org/pdf/1601.01180.pdf, implementation also in https://www.paulamoraga.com/book-geospatial/sec-arealdatatheory.html
+# In the classical BYM (Besag, York and Mollié) model, the spatially structured component cannot be seen independently from the unstructured component. This makes prior definitions for the hyperparameters of the two random effects challenging. BYM2 leads to improved parameter control as the hyperparameters can be seen independently from each other, defining a model that depends on two hyperparameters tau_b (pure overdispersion) and phi (spatially structured correlation - proportion of the marginal variance explained by the structured effect-) that can be interpretable.
+# In INLA the prior is defined on log(tau) & log(phi/(1-phi)). A reasonable choice for the prior of phi is the conservative one that assumes that the unstructured random effect accounts for more of the variability than the spatially structured effect so that P(phi < 0.5) = 2/3. For the prior of tau it depends on the marginal standard deviation that we define. We can define for example a 0.5 of marginal standard deviation upper bound that corresponds to P((1/square(tau)) > (0.5/0.31)) = 0.01. 
+pc_prior <- list(
+  prec = list(
+    prior = "pc.prec",
+    param = c(0.5 / 0.31, 0.01)
+  ),
+  phi = list(
+    prior = "pc",
+    param = c(0.5, 2/3)
+  )
+)
+
+#We will calculate both estimates using a bym model specification with standard uniform prior distribution for the hyperparameters and also using a bym2 model specification with the previous noted prior hyperparamaters distribution.
+
+#First, we have to build the adjancency matrix:
 nb <- poly2nb(shapefileT)
 nb2INLA("map.adj", nb)
 g <- inla.read.graph(filename = "map.adj")
-shapefileT$re_u <- 1:nrow(shapefileT@data)
-sdunif = "expression: logdens=log(0.5)-log_precision/2; return(logdens);"
 
-#INLA models
-inla_mod <- function(sf, outcome = "cas"){
+#Let's define an index for every poligon
+shapefileT$idarea <- 1:nrow(shapefileT@data)
+
+#Define the function to perform the INLA models with the model specified
+inla_mod <- function(sf, outcome = "cas", effect = "sir", model = "bym"){
+  
+  if(outcome == "cas" & effect == "sir") {
+    print(model)
+  }
   
   sf@data <- sf@data %>% 
     rename("n" = str_glue("n_{outcome}"), "exp" = str_glue("exp_{outcome}"))
   
   #If there are no cases (the hospitalization and vaccination doesn't begin at the initial cases date)
   if(!all(sf$n == 0)){
+    
+    #Define the two different formulations depending on the model used:
+    if(model == "bym") {
+      formula = n ~ f(idarea, model = "bym", graph = g, hyper = list(prec.unstruct = list(prior = sdunif), prec.spatial = list(prior = sdunif)), cdf=c(log(1)))
+    } else if(model == "bym2") {
+      formula <- n ~ f(idarea, model = "bym2", graph = g, hyper = pc_prior)
+    }
+    
     #INLA model for the smooth ratio observed/expected (SIR)
-    formula = n ~ f(re_u, model = "bym", graph = g, hyper = list(prec.unstruct = list(prior = sdunif), prec.spatial = list(prior = sdunif)), cdf=c(log(1)))
-    
     set.seed(342)
-    res <- inla(formula, family="poisson", data=sf@data, E=exp, control.compute=list(dic=T, cpo=TRUE), control.predictor=list(compute=TRUE, cdf=c(log(1))), control.fixed = list(prec.intercept = 0.01))
-    
-    res_sir <- res$summary.fitted.values %>% 
-      dplyr::select("rr" = "mean", "rr_lci" = "0.025quant", "rr_uci" = "0.975quant", "p" = contains("cdf"))
-    
-    #INLA model for the smooth incidence tax
-    if(outcome == "cas"){
-      
-      formula = n ~ f(re_u, model = "bym", graph = g, hyper = list(prec.unstruct = list(prior = sdunif), prec.spatial = list(prior = sdunif)), cdf=c(log(0.01),log(0.005)))
-      
-      set.seed(342)
-      res <- inla(formula, family="poisson", data=sf@data, E=N, control.compute=list(dic=T, cpo=TRUE), control.predictor=list(compute=TRUE, cdf=c(log(0.005),log(0.0025))), control.fixed = list(prec.intercept = 0.01))
-      res_srate <- res$summary.fitted.values %>% 
-        dplyr::select("srate" = "mean", "srate_lci" = "0.025quant", "srate_uci" = "0.975quant", contains("cdf"))
-      names(res_srate)[grepl("cdf", names(res_srate))] <- c("p2", "p3")
-      
-    }else{
-      
-      formula = n ~ f(re_u, model = "bym", graph = g, hyper = list(prec.unstruct = list(prior = sdunif), prec.spatial = list(prior = sdunif)))
-      
-      set.seed(342)
-      res <- inla(formula, family="poisson", data=sf@data, E=N, control.compute=list(dic=T, cpo=TRUE), control.predictor=list(compute=TRUE), control.fixed = list(prec.intercept = 0.01))
-      res_srate <- res$summary.fitted.values %>% 
-        dplyr::select("srate" = "mean", "srate_lci" = "0.025quant", "srate_uci" = "0.975quant")
-      
+    if(effect == "sir") {
+      mod <- inla(formula, family="poisson", data=sf@data, E=exp, control.compute=list(dic = TRUE, cpo = TRUE, waic = TRUE), control.predictor=list(compute=TRUE, cdf=c(log(1))))
+    } else if(effect == "tax") {
+      #INLA model for the smooth incidence tax
+      mod <- inla(formula, family="poisson", data=sf@data, E=N, control.compute=list(dic = TRUE, cpo = TRUE, waic = TRUE), control.predictor=list(compute=TRUE))
     }
-
-    res <- cbind("codi_abs" = sf$codi_abs, res_sir, res_srate)
     
+    # res_sir <- res$summary.fitted.values %>% 
+    #   dplyr::select("rr" = "mean", "rr_lci" = "0.025quant", "rr_uci" = "0.975quant", "p" = contains("cdf"))
+    # set.seed(342)
+    # res_srate <- res$summary.fitted.values %>% 
+    #   dplyr::select("srate" = "mean", "srate_lci" = "0.025quant", "srate_uci" = "0.975quant")
+    # res <- cbind("codi_abs" = sf$codi_abs, res_sir, res_srate)
   }else{
-    
-    if(outcome == "cas"){
-      res <- sf@data %>% 
-        dplyr::select(codi_abs) %>% 
-        mutate(rr = 0, rr_lci = 0, rr_uci = 0, p = 0, srate = 0, srate_lci = 0, srate_uci = 0, p2 = 0, p3 = 0)
-    }else{
-      res <- sf@data %>% 
-        dplyr::select(codi_abs) %>% 
-        mutate(rr = 0, rr_lci = 0, rr_uci = 0, p = 0, srate = 0, srate_lci = 0, srate_uci = 0)
-    }
-      
+    #The probability is given as the inverse (probability that is not higher than 1) so we have to put 1 
+    # res <- sf@data %>% 
+    #   dplyr::select(codi_abs) %>% 
+    #   mutate(rr = 0, rr_lci = 0, rr_uci = 0, p = 1, srate = 0, srate_lci = 0, srate_uci = 0)
+    mod <- NULL
   }
   
-  if(outcome != "cas"){
-    res <- res %>% 
-      dplyr::select(-codi_abs)
-  }
-    
-  rownames(res) <- NULL
+  # if(outcome != "cas"){
+  #   res <- res %>% 
+  #     dplyr::select(-codi_abs)
+  # }
+  #   
+  # rownames(res) <- NULL
+  # 
+  # return(res %>% 
+  #           rename_all(function(x){
+  #             ifelse(x!="codi_abs", str_glue("{x}_{outcome}"), x)
+  #           })
+  #       )
   
-  return(res %>% 
-            rename_all(function(x){
-              ifelse(!x %in% c("codi_abs", "p2", "p3"), str_glue("{x}_{outcome}"), x)
-            })
-        )
+  return(mod)
     
 }
 
-#Function that calculates the observed, expected, sir and the estimated SAE results for the 7-days window defined by the date x of each one of the outcomes
+#Define the function that calculates the observed, expected, sir and the estimated SAE results for the 7-days window defined by the date x of each one of the outcomes
 #We will consider the cases, hospitalization and vaccination incidence over the total number of people in the ABS being considered the population at risk
 #We would like to consider the hospitalization/cases ratio but we don't have the age distribution of the cases by ABS... We only can do it grouping it by sex.
-sae_inc <- function(x){
+res_mod <- function(x){
   
   print(x)
   
@@ -231,24 +262,39 @@ sae_inc <- function(x){
       sir_vac = ifelse(exp_vac == 0, 0, n_vac/exp_vac)
     )
   
-  #Add the results for each ABS to the geographical information
+  #Run the INLA models and save them:
   map<-shapefileT
   
   map@data <- map@data %>% 
     full_join(inc_abs, by = "codi_abs") 
   
   #Run inla models for every one of the outcomes:
-  inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
-    mutate(
-      res = map(outcomes, ~inla_mod(map, .x))
-    )
+  #There is one date that the bym2 fails to converge for the sir outcome but not its bym version. We calculate the smooth sir for this date with bym
+  if(x != ymd("2020-08-23"))  {
+    inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
+      mutate(
+        res_sir_bym = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym")),
+        res_tax_bym = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym")),
+        res_sir_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym2")),
+        res_tax_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym2"))
+      )
+  } else {
+    inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
+      mutate(
+        res_sir_bym = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym")),
+        res_tax_bym = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym")),
+        res_sir_bym2 = res_sir_bym,
+        res_tax_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym2"))
+      )
+  }
   
-  add_res <- do.call(cbind, inla_res$res)
   
-  inc_abs <- inc_abs %>% 
-    left_join(add_res, by = "codi_abs")
+  # add_res <- do.call(cbind, inla_res$res)
+  # 
+  # inc_abs <- inc_abs %>% 
+  #   left_join(add_res, by = "codi_abs")
   
-  return(inc_abs)
+  return(inla_res)
   
 }
 
@@ -265,11 +311,11 @@ ndat_sae1 <- tibble(data = seq(range_data[1], range_data[2], by = 1)) %>%
   slice(-1) %>% 
   dplyr::select(-wday) %>%
   #We divide the period by 2 because the inla program might crash
-  filter(data <= ymd("2021-05-13")) %>% 
+  filter(data <= ymd("2021-05-09")) %>% 
   mutate(
-    df = map(data, sae_inc)
+    res = map(data, res_mod)
   )
-  
+
 ndat_sae2 <- tibble(data = seq(range_data[1], range_data[2], by = 1)) %>%
   mutate(wday = wday(data)) %>% 
   #Filter mondays:
@@ -278,14 +324,78 @@ ndat_sae2 <- tibble(data = seq(range_data[1], range_data[2], by = 1)) %>%
   slice(-1) %>% 
   dplyr::select(-wday) %>%
   #We divide the period by 2 because the inla program might crash
-  filter(data > ymd("2021-05-13")) %>% 
+  filter(data > ymd("2021-05-09")) %>% 
   mutate(
-    df = map(data, sae_inc)
+    res = map(data, res_mod)
   )
-  
+
 ndat_sae <- rbind(ndat_sae1, ndat_sae2)
 
+#Unnest the results in ndat_sae
+ndat_sae <- ndat_sae %>% 
+  unnest(res)
+
 print(proc.time()-ptm)
+
+#For comparison of the two models, we wil calculate DIC and WAIC of the weekly models (https://academica-e.unavarra.es/bitstream/handle/2454/43973/Urdangarin_Space-timeInteractions_1662460190262_41560.pdf?sequence=2&isAllowed=y; code in https://github.com/spatialstatisticsupna/Comparing-R-INLA-and-NIMBLE/blob/main/R). The mean and standard deviation of the hyperparameters using each model can't be compared as in table 3 because the hyperparameters are different. We can compare the estimated relative risks and see if there're differences. 
+#Deviance Information Criterion (DIC) is a combination of the posterior mean deviance (that is directly related to the likelihood of the model) penalized by the number of effective parameters, similar to what AIC is. 
+#Watanabe-Akaike Information Criterion (WAIC) also is a combination of two quantities, the pointwise posterior predictive density and a correction on the effective number of parameters to adjust for overfitting. It's recommended by Gelman, 2014 (https://link.springer.com/article/10.1007/s11222-013-9416-2) over the DIC criterium.
+
+#We expect not to get optimal DIC and WAIC with BYM2 but similar ones, and choose bym2 as we can interpret the parameters (page 2 in https://arxiv.org/pdf/1601.01180.pdf). We can interpret the results of the posterior hyperparameters of the bym2 model: how spatial influence and pure overdispersion changes over time.
+
+#Calculate DIC and WAIC
+sp_dic_waic <- ndat_sae %>% 
+  mutate(
+    dic_bym = map_dbl(res_sir_bym, ~ifelse(is.null(.x), NA, .x$dic$dic)),
+    waic_bym = map_dbl(res_sir_bym, ~ifelse(is.null(.x), NA, .x$waic$waic)),
+    dic_bym2 = map_dbl(res_sir_bym2, ~ifelse(is.null(.x), NA, .x$dic$dic)),
+    waic_bym2 = map_dbl(res_sir_bym2, ~ifelse(is.null(.x), NA, .x$waic$waic))
+  ) %>% 
+  dplyr::select(data, outcomes, dic_bym, waic_bym, dic_bym2, waic_bym2) %>% 
+  pivot_longer(dic_bym:waic_bym2, names_to = c(".value", "model"), names_pattern = "(.*)(bym.*$)") %>% 
+  rename_all(
+    ~gsub("\\_$", "", .x)
+  )
+
+save(sp_dic_waic, file = file.path(dades_ana, "sp_dic_waic.Rda"))
+
+
+
+
+#----------- Spatio-temporal models --------------
+# https://sci-hub.st/10.1002/1097-0258%2820000915/30%2919%3A17/18%3C2555%3A%3AAID-SIM587%3E3.0.CO%3B2-%23
+# https://www.uv.es/famarmu/doc/Euroheis2-report.pdf
+#There're different ways to take in account the time dependency of the effect.
+#Linear trend is discarded, so we can follow Knorr-Held specification, for example:
+#log(theta_ij) = alpha + u_i + v_i + gamma_j + phi_j + delta_ij
+#gamma_j + phi_j is a temporal random effect: phi_j is an unstructred temporal effect and gamma_j can follow a random walk in time of first order (RW1):
+#gamma_j | gamma_{j-1} ~ N(gamma_{j-1}, sigma^2_{gamma})
+#or a random walk in time of second order (RW2)
+#gamma_j | gamma_{j-1},gamma_{j-2} ~ N(2gamma_{j-1} - gamma_j-2, sigma^2_{gamma})
+#delta_ij is the interaction term between space and time and can be specified in many different ways. Knorr-Held proposes four types of interactions between (u_i, gamma_j), (u_i, phi_j), (v_i, gamma_j) and (v_i, phi_j)
+
+
+
+
+#Sobre el millor model final afegirem les variables d'ajust, però abans farem la prova de la multicolinearitat. Provarem diferents variabes (que no siguin colineals) i triarem el millor ajust amb el DIC i WAIC també! També es poden fer diagnòstic dels models mirant els residus vs predictors i la distribució posterior de la variació de les dades.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #Unnest and transform the data:
 #We will multiply by 100k cases and hospitalization rates. We will multiply by 100 the second dose vaccination rate to have the percentage. 

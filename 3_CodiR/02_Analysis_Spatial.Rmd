@@ -1,0 +1,146 @@
+---
+title: "Distribució error ABS agregats"
+
+#Data d'avui: Surt segons idioma d R
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+ 
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile,
+      encoding=encoding, 
+      output_file=file.path(dirname('P:/TFM'),'5_Productes/Analysis_Spatial.html')) })
+ 
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+##Estil 
+    theme: cosmo 
+    highlight: tango
+###número seccions
+    number_sections: true
+
+---
+
+```{r results='hide', echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(gtsummary)
+library(INLA)
+library(captioner)
+library(dplyr)
+library(kableExtra)
+library(ggplot2)
+#Enumerar taules i figures
+fig_nums <- captioner(prefix = 'Figure')
+tab_nums <- captioner(prefix = 'Table')
+citef <- pryr::partial(fig_nums, display = 'cite')
+citet <- pryr::partial(tab_nums, display = 'cite')
+###############
+setwd('P:/TFM')
+dades_ana<-'P:/TFM/2_Dades/2_Analisi'
+
+#Load DIC & WAIC of spatial models
+load(file.path(dades_ana,"sp_dic_waic.Rda"))
+```
+
+# DIC & WAIC
+
+We will compare the time series of DIC and WAIC values between using a BYM or a BYM2 model. We don't expect to get optimal DIC and WAIC with BYM2, but similar values. 
+
+`r tab_nums("dic_waic", "Description of estimated DIC and WAIC for BYM and BYM2 spatial models")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+theme_gtsummary_journal(journal = "jama")
+list("style_number-arg:big.mark" = "") %>%
+    set_gtsummary_theme()
+
+sp_dic_waic %>% 
+  mutate(
+    model = toupper(model)
+  ) %>% 
+  pivot_longer(cols = c(dic, waic), names_to = "type", values_to = "val") %>% 
+  pivot_wider(names_from = outcomes, values_from = val) %>% 
+  dplyr::select(
+    model, type, cas, hosp, vac 
+  ) %>% 
+  tbl_strata(
+    strata = model,
+    ~.x %>% 
+      tbl_summary(
+        by = type,
+        label = list(
+          cas ~ "Cases",
+          hosp ~ "Hospitalization",
+          vac ~ "Vaccination"
+        ),
+        type = list(all_continuous() ~ "continuous2"),
+        statistic = list(
+          all_continuous2() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})")
+        ),
+        digits = list(all_continuous2() ~ 2),
+        missing = "no"
+      ) %>% 
+      modify_header(label = "",
+                  stat_1 = "**DIC**",
+                  stat_2 = "**WAIC**") 
+  ) %>% 
+  as_kable_extra() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+`r fig_nums("dic", "Evolution of DIC for BYM and BYM2 spatial models on the SIR of covid-19 cases")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+cas_dic <- sp_dic_waic %>% 
+  filter(outcomes == "cas") %>% 
+  dplyr::select(data, model, dic)
+
+ggplot(data = cas_dic, aes(x = data, y = dic, color = model)) +
+  geom_point() +
+  geom_line(aes(group = model)) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y - %m") +
+  labs(x = "Date", y = "DIC") +
+  scale_color_discrete(name = "Model") +
+  theme_minimal()
+
+```
+
+`r fig_nums("waic", "Evolution of WAIC for BYM and BYM2 spatial models on the SIR of covid-19 cases")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+cas_waic <- sp_dic_waic %>% 
+  filter(outcomes == "cas") %>% 
+  dplyr::select(data, model, waic)
+
+ggplot(data = cas_waic, aes(x = data, y = waic, color = model)) +
+  geom_point() +
+  geom_line(aes(group = model)) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y - %m") +
+  labs(x = "Date", y = "WAIC") +
+  scale_color_discrete(name = "Model") +
+  theme_minimal()
+```
+
+Points and lines overlap so there is no difference in the estimated DIC and WAIC between both models.
+
+# RR
+
+We calculate the difference in the estimated relative risks of each area using both models (BYM and BYM2) and compare them:
+
+# BYM2 hyperparameters
+
+As we have seen, DIC and WAIC values are similar between the two models and also the estimated relative risk have few differences. Therefore, we would choose BYM2 as it performs similar as BYM and its parameters are interpretable.
+
+## $\phi$ (spatially structured correlation)
+
+This parameter represents the proportion of the marginal variance explained by the structured effect. Let's see how it changes over time:
+
+
+
+## $\tau_b$ (pure overdispersion)
+
+This parameter represents the pure overdispersion of the different areas (both structured and non-structured). Let's see how it changes over time:
+
