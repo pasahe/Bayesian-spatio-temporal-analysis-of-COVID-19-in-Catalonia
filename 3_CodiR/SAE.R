@@ -70,6 +70,10 @@ Tdat_edat <- dat_edat %>%
 sf::sf_use_s2(FALSE)
 
 #----------Spatial models-------------
+#The outcome will be the SIR to estimate RR. We will also calculate smooth taxes but I think is most relevant to get RR and detect areas with high rates. In the end, our goal is not to compare the different waves in terms of incidence and rates (and they're even uncomparable) but to estimate areas with higher risks than others across the pandemic, and to try to explain these differences. In the end, RR are comparable between waves case incidence values no. I think that incidence and rates are nice to have but we don't need to smooth them, what is the point.
+
+#Furthermore, I think that we would have to calculate the RR only for the cases and hospitalization as there is very few variability on fully vaccination percentages and thus it's not necessary to calculate the RR. 
+
 #Està bastant ben explicat la motivació de bym:
 # https://www.sciencedirect.com/science/article/pii/S0047259X12000589
 
@@ -269,24 +273,20 @@ res_mod <- function(x){
     full_join(inc_abs, by = "codi_abs") 
   
   #Run inla models for every one of the outcomes:
-  #There is one date that the bym2 fails to converge for the sir outcome but not its bym version. We calculate the smooth sir for this date with bym
-  if(x != ymd("2020-08-23"))  {
-    inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
-      mutate(
-        res_sir_bym = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym")),
-        res_tax_bym = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym")),
-        res_sir_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym2")),
-        res_tax_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym2"))
-      )
-  } else {
-    inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
-      mutate(
-        res_sir_bym = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym")),
-        res_tax_bym = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym")),
-        res_sir_bym2 = res_sir_bym,
-        res_tax_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym2"))
-      )
-  }
+  #There is one date that the bym2 fails to converge for the sir outcome in hospitalization but not its bym version. We calculate the smooth sir for this date with bym
+  inla_res <- tibble(outcomes = c("cas", "hosp", "vac")) %>% 
+    mutate(
+      res_sir_bym = map(outcomes, ~inla_mod(map, .x, effect = "sir", model = "bym")),
+      res_tax_bym = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym")),
+      res_sir_bym2 = map(outcomes, function(out) {
+        if(!(x == ymd("2020-08-23") & out == "hosp"))  {
+          inla_mod(map, out, effect = "sir", model = "bym2")
+        } else {
+          inla_mod(map, out, effect = "sir", model = "bym")
+        }
+      }),
+      res_tax_bym2 = map(outcomes, ~inla_mod(map, .x, effect = "tax", model = "bym2"))
+    )
   
   
   # add_res <- do.call(cbind, inla_res$res)
@@ -341,7 +341,7 @@ print(proc.time()-ptm)
 #Deviance Information Criterion (DIC) is a combination of the posterior mean deviance (that is directly related to the likelihood of the model) penalized by the number of effective parameters, similar to what AIC is. 
 #Watanabe-Akaike Information Criterion (WAIC) also is a combination of two quantities, the pointwise posterior predictive density and a correction on the effective number of parameters to adjust for overfitting. It's recommended by Gelman, 2014 (https://link.springer.com/article/10.1007/s11222-013-9416-2) over the DIC criterium.
 
-#We expect not to get optimal DIC and WAIC with BYM2 but similar ones, and choose bym2 as we can interpret the parameters (page 2 in https://arxiv.org/pdf/1601.01180.pdf). We can interpret the results of the posterior hyperparameters of the bym2 model: how spatial influence and pure overdispersion changes over time.
+#We expect not to get optimal DIC and WAIC with BYM2 but similar ones, and choose bym2 as we can interpret the parameters (page 2 in https://arxiv.org/pdf/1601.01180.pdf). We can interpret the results of the posterior hyperparameters of the bym2 model: how spatial influence and pure overdispersion changes over time. Also, it would be interesting to see how the variability of the spatial effect changes when adjusting for more variables (to see its importance over other possible effects)
 
 #Calculate DIC and WAIC
 sp_dic_waic <- ndat_sae %>% 
@@ -357,9 +357,84 @@ sp_dic_waic <- ndat_sae %>%
     ~gsub("\\_$", "", .x)
   )
 
+#Get estimated hyperparameters (phi and precision) from BYM2 models
+
+bym2_hp <- ndat_sae %>% 
+  mutate(
+    hp = pmap(list(data, outcomes, res_sir_bym2), function(x, y, z) {
+      if(!is.null(z) & !(x == ymd("2020-08-23") & y == "hosp")) {
+        tibble("SD" = 1/sqrt(z$summary.hyperpar$mean[1]), "Phi" = z$summary.hyperpar$mean[2])
+      } else {
+        NULL
+      }
+    })
+  ) %>% 
+  dplyr::select(data, outcomes, hp) %>% 
+  unnest(hp)
+
+#Get estimated results from smooth RR and tax estimation from the BYM and BYM2 models
+res_sp <- ndat_sae %>% 
+  mutate(
+    res_sir_bym = map(res_sir_bym, function(x) {
+      if(!is.null(x)) {
+        x$summary.fitted.values %>% 
+          dplyr::select("rr_bym" = "mean", "rr_lci_bym" = "0.025quant", "rr_uci_bym" = "0.975quant", "p_bym" = contains("cdf"))
+      } else {
+        NULL
+      }
+    }
+    ),
+    res_sir_bym2 = map(res_sir_bym2, function(x) {
+      if(!is.null(x)) {
+        x$summary.fitted.values %>% 
+          dplyr::select("rr_bym2" = "mean", "rr_lci_bym2" = "0.025quant", "rr_uci_bym2" = "0.975quant", "p_bym2" = contains("cdf"))
+      } else {
+        NULL
+      }
+    }
+    ),
+    res_tax_bym = map(res_tax_bym, function(x) {
+      if(!is.null(x)) {
+        x$summary.fitted.values %>% 
+          dplyr::select("stax_bym" = "mean", "stax_lci_bym" = "0.025quant", "stax_uci_bym" = "0.975quant")
+      } else {
+        NULL
+      }
+    }
+    ),
+    res_tax_bym2 = map(res_tax_bym2, function(x) {
+      if(!is.null(x)) {
+        x$summary.fitted.values %>% 
+          dplyr::select("stax_bym2" = "mean", "stax_lci_bym2" = "0.025quant", "stax_uci_bym2" = "0.975quant")
+      } else {
+        NULL
+      }
+    }
+    ),
+    res = pmap(list(res_sir_bym, res_sir_bym2,res_tax_bym, res_tax_bym2), cbind),
+    #Add the ABS
+    res = map(res, function(x) {
+      if(!is.null(x)) {
+        x %>%
+          add_column(abs = shapefileT$abs,
+                     .before = "rr_bym")
+      } else {
+        NULL
+      }
+    }
+    )
+  ) %>% 
+  dplyr::select(data, outcomes, res) %>% 
+  unnest(res) %>% 
+  pivot_longer(rr_bym:stax_uci_bym2, names_to = c(".value", "model"), names_pattern = "(.*)(bym.*$)") %>% 
+  rename_all(
+    ~gsub("\\_$", "", .x)
+  )
+
+
 save(sp_dic_waic, file = file.path(dades_ana, "sp_dic_waic.Rda"))
-
-
+save(bym2_hp, file = file.path(dades_ana, "bym2_hp.Rda"))
+save(res_sp, file = file.path(dades_ana, "res_sp.Rda"))
 
 
 #----------- Spatio-temporal models --------------
@@ -373,6 +448,13 @@ save(sp_dic_waic, file = file.path(dades_ana, "sp_dic_waic.Rda"))
 #or a random walk in time of second order (RW2)
 #gamma_j | gamma_{j-1},gamma_{j-2} ~ N(2gamma_{j-1} - gamma_j-2, sigma^2_{gamma})
 #delta_ij is the interaction term between space and time and can be specified in many different ways. Knorr-Held proposes four types of interactions between (u_i, gamma_j), (u_i, phi_j), (v_i, gamma_j) and (v_i, phi_j)
+
+#For the only spatial dependency we will take BYM2 specification as it's the same as BYM, but interpetable as we have seen
+
+#We can follow the implementation on https://www.paulamoraga.com/book-geospatial/sec-arealdatatheory.html and also in the previous mentioned article:
+# https://academica-e.unavarra.es/bitstream/handle/2454/43973/Urdangarin_Space-timeInteractions_1662460190262_41560.pdf?sequence=2&isAllowed=y; https://github.com/spatialstatisticsupna/Comparing-R-INLA-and-NIMBLE/blob/main/R/bym_models/bym_h1_inla.R 
+
+#We will consider again standard uniform distribution for the set of hyperprior distributions for all hyperparameters as in the article (except for bym2 ones that have they own PC prior distributions)
 
 
 
