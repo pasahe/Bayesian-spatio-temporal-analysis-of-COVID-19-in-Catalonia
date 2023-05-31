@@ -1,0 +1,3230 @@
+---
+title: "Bayesian hierarchical models for space-temporal modeling of COVID-19 in Catalonia. Vaccination analysis"
+#Data d'avui: Surt segons idioma d R
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+ 
+knit: (function(inputFile, encoding) {
+ 
+  rmarkdown::render(inputFile,
+      encoding=encoding, 
+      output_file=file.path(dirname('C:\\Users\\psatorra\\Documents\\TFM'),'TFM/5_Productes/Analysis_Spatial_Temporal_Vaccination_v2.html')) })
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    theme: cosmo 
+    highlight: tango
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r results='hide', echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(gtsummary)
+library(INLA)
+library(captioner)
+library(dplyr)
+library(kableExtra)
+library(ggplot2)
+library(effectsize)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(stringr)
+library(sf)
+library(patchwork)
+library(viridis)
+library(GGally)
+library(mvtsplot)
+library(usdm)
+library(tibble)
+library(ggridges)
+library(plotly)
+library(DT)
+
+#Enumerar taules i figures
+fig_nums <- captioner(prefix = 'Figure')
+tab_nums <- captioner(prefix = 'Table')
+citef <- pryr::partial(fig_nums, display = 'cite')
+citet <- pryr::partial(tab_nums, display = 'cite')
+###############
+# setwd('P:/TFM')
+setwd('C:\\Users\\psatorra\\Documents\\TFM')
+dades_ana <- '2_Dades/2_Analisi'
+
+#Load data by ABS and date
+load(file.path(dades_ana, "dat.Rda"))
+#dat for the population 
+load(file.path(dades_ana, "dat_70.Rda"))
+
+#Load all incidences from the global of CAT
+load(file.path(dades_ana, "dat_cat.Rda"))
+
+#Load all incidences from each sanitary regions
+load(file.path(dades_ana, "dat_rs.Rda"))
+
+#Load shapefileT
+load(file.path(dades_ana, "shapefileT.Rda"))
+
+#Load population
+load(file.path(dades_ana, "pob_abs.Rda"))
+
+#Load cases for each outcome
+load(file.path(dades_ana, "dat_edat.Rda"))
+load(file.path(dades_ana, "dat_hosp.Rda"))
+load(file.path(dades_ana, "dat_vac.Rda"))
+
+#Load covariates
+load(file = file.path(dades_ana, "Covariates/dat_covar.Rda"))
+
+#Vaccination effect
+load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_raw.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_lag2.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_nocovar.Rda"))
+```
+
+# Description
+
+We have fully vaccination data since 2020-28-12 but until the week of 2021-01-17 we don't have enough fully vaccination counts (only 17 fully vaccination individuals). Also we won't take the data of the last day, 2022-07-25 as it's outside the study period (2022-07-24). Therefore, we will take the vaccination data from 2021-01-17 to 2022-07-24.
+
+Fully vaccination is defined as administrations of second doses or administrations of one shot (J&J) vaccines. For the analysis, we will consider the cumulative percentage of fully vaccination individuals as weekly rates don't take in account previous history of vaccines administered. Because administered vaccines in a given time point can have an effect in posterior time outcomes,we have to take in account all the entire vaccination history in that area. 
+
+`r tab_nums("tab_vac_cum", "Descriptive table of the cumulative fully vaccination counts and percentage of all ABS in the whole period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat %>% 
+  filter(data == max(data)) %>% 
+  mutate(
+    rate_vac = rate_vac*100
+  ) %>% 
+  dplyr::select(n_vac, rate_vac) %>% 
+  tbl_summary(
+    label = list(n_vac ~ "ABS cumulative fully vaccination counts",
+                 rate_vac ~ "ABS cumulative fully vaccination percentage (%)"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+  wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+  TRUE ~ data_inici
+)
+
+sdat_cat <- dat_cat %>% 
+    rename_all(~ gsub("_vac", "", .x))  %>% 
+    mutate(
+      xint = case_when(
+        data %in% data_inici ~ data
+      )
+    )
+
+```
+
+`r fig_nums("plot_vac", "Plot of the evolution of the weekly fully vaccination rate per 100k habitants across the study period")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  ylab("Weekly vaccination rate (x100k hab.)")
+```
+
+The 5th wave is were daily rates of fully vaccination have their peak.
+
+`r fig_nums("plot_vac_cum", "Plot of the evolution of the cumulative vaccination rate per 100k habitants across the study period")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+ggplot(data = sdat_cat, aes(x = data, y = Trate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  ylab("Cumulative vaccination percentage (%)")
+```
+
+`r fig_nums("map_vac", "Map of the total cumulative fully vaccination percentage across all the study period for each ABS")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  filter(data == max(data)) %>% 
+  mutate(
+    rate_vac = rate_vac*100
+  )
+
+map <- st_as_sf(shapefileT) %>% 
+  left_join(sdat, by = "abs")
+
+cat <- ggplot(map) + 
+       geom_sf(aes(fill = rate_vac)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       # ggtitle("Cumulative fully vaccination percentage") +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1)
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rate_vac)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1, guide = "none") +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+```
+
+Percentages of fully vaccinated people in the last available date in the different areas go from 60% to 90%. Most of the areas have a percentage between 80 and 90% but there're some areas with a percentage a little bit lower around 70% and few with a percentage close to 90%.
+
+`r fig_nums("plot_vac_rs", "Plot of the weekly fully vaccinated percentage by each of the sanitary regions along with the median across time")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+#Method for plotting multivariate time series
+# https://www.jstatsoft.org/article/view/v025c01
+dat_plot <- dat_rs %>% 
+  dplyr::select(data, NOMRS, rate_vac) %>% 
+  pivot_wider(names_from = NOMRS, values_from = rate_vac) %>% 
+  dplyr::select(-data)
+
+mvtsplot(dat_plot, group = NULL, xtime = unique(dat_rs$data), norm = c("global"),
+         levels = 5, smooth.df = NULL, margin = TRUE, 
+         palette = "YlOrRd", rowstat = "median", right.xlim = c(0, 100))
+```
+
+There're no differences in the pattern of each region as we measure a cumulative variable that is more difficult to have variability.
+
+Let's see the distribution of the cumulative fully vaccination percentage by age and sex groups.
+
+`r fig_nums("sex_vac", "Cumulative fully vaccination percentage in the whole period by sex groups")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ Tpob_vac <- pob_abs %>% 
+  group_by(any, sexe, edat_vac) %>% 
+  summarise(NT = sum(N)) %>% 
+  rename(edat = edat_vac)
+
+plot_vac <- dat_vac %>% 
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n)) %>% 
+    left_join(Tpob_vac %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    group_by(sexe) %>% 
+    summarise(
+      n = sum(n),
+      NT = sum(NT)
+    ) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, Tratio)
+
+ggplot(plot_vac, aes(x = sexe, y = Tratio * 100, fill = sexe)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(breaks = seq(0, 100, by = 20)) +
+  expand_limits(y = 100) +
+  ylab("%") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_x_discrete(name = "", labels = c("Women", "Men"))
+```
+
+The vaccination percentage is very similar between the two sex groups. 
+
+`r fig_nums("age_sex_vac", "Cumulative hospitalization percentage in the whole period for every age and sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ Tvac_total <- dat_vac %>%
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n)) %>% 
+    left_join(Tpob_vac %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, edat, Tratio)
+
+plot_vac <- Tvac_total %>% 
+  mutate(
+    Tratio = case_when(
+      sexe == "Dona" ~ -Tratio,
+      TRUE ~ Tratio
+    ),
+    #Put > 1 to 1
+    Tratio = case_when(
+      Tratio > 1 ~ 1,
+      Tratio < -1 ~ -1,
+      TRUE ~ Tratio
+    )
+  )
+
+ggplot(plot_vac, aes(x = Tratio * 100, y = edat, fill = sexe)) +
+  geom_col() +
+  scale_x_continuous(breaks = seq(-100, 100, by = 20), labels = abs(seq(-100, 100, by = 20))) +
+  xlab("%") +
+  ylab("Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", name = "", labels = c("Women", "Men")) 
+```
+
+The oldest age groups are more vaccinated than the rest. The minimum age for vaccination is of 5 years. There're some groups of age that have a 100% of cumulative fully vaccination. This can happen because we're counting J&J vaccines that in some individuals it was given twice after the fully immunization.
+
+`r fig_nums("sex_vac_ts", "Evolution of the daily fully vaccination percentage in function of the sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_sexe <- pob_abs %>% 
+  group_by(any, sexe) %>% 
+  summarise(N = sum(N))
+
+add_vac_w <- tibble(data = seq(min(sdat_cat$data), min(dat_vac$data) - 1, 1), sexe = "Dona", n = 0)
+
+add_vac_m <- tibble(data = seq(min(sdat_cat$data), min(dat_vac$data) - 1, 1), sexe = "Home", n = 0)
+
+Tdat_vac <- dat_vac %>% 
+  group_by(data, sexe) %>% 
+  summarise(n = sum(n)) 
+
+plot_vac <- rbind(add_vac_w, add_vac_m, Tdat_vac) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_sexe, by = c("any", "sexe")) %>% 
+  mutate(
+    ratio = n*100000/N,
+    sexe = factor(sexe, levels = c("Home", "Dona")),
+    xint = case_when(
+      data %in% data_inici ~ data
+    )
+  )
+
+# ggplot(plot_vac, aes(x = data, y = ratio, fill = sexe)) +
+#   geom_area() +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   ylab("Week fully vaccination rate (x100k hab.)") +
+#   xlab("") +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1) +
+#   geom_vline(aes(xintercept = xint), linetype = "dashed") 
+ggplot(plot_vac, aes(x = data, y = ratio, color = sexe, group = sexe)) +
+  geom_line(linewidth = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Week fully vaccination rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1) +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") 
+
+```
+
+In the beginning of the vaccination campaign the percentage of fully vaccination in women was higher than in men while in the 4th wave it was compensated a bit. This might happen because there is more old women than old men and the first vaccinated population were the oldest one.
+
+`r fig_nums("age_vac_ts", "Evolution of the daily fully vaccination rate in function of the age group (bigger or lower than 70 years)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_edat <- pob_abs %>% 
+  mutate(
+    edat_70 = case_when(
+      edat_cas %in% c("70-79", "80-89", "90+") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(any, edat_70) %>% 
+  summarise(N = sum(N))
+
+Tdat_vac <- dat_vac %>% 
+  mutate(
+    edat_70 = case_when(
+      edat %in% c("70 a 79", "80 o més") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(data, edat_70) %>% 
+  summarise(n = sum(n)) 
+
+add_vac_l70 <- tibble(data = seq(min(sdat_cat$data), min(dat_vac$data) - 1, 1), edat_70 = "< 70 years", n = 0)
+
+add_vac_u70 <- tibble(data = seq(min(sdat_cat$data), min(dat_vac$data) - 1, 1), edat_70 = ">= 70 years", n = 0)
+
+plot_vac <- rbind(add_vac_l70, add_vac_u70, Tdat_vac) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_edat, by = c("any", "edat_70")) %>% 
+  mutate(
+    ratio = n*100000/N,
+    xint = case_when(
+      data %in% data_inici ~ data
+    )
+  )
+
+# ggplot(plot_vac, aes(x = data, y = ratio, fill = edat_70)) +
+#   geom_area() +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   ylab("Daily vaccination rate (x100k hab.)") +
+#   xlab("") +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Pastel1", name = "", direction = -1) +
+#   geom_vline(aes(xintercept = xint), linetype = "dashed") 
+ggplot(plot_vac, aes(x = data, y = ratio, color = edat_70, group = edat_70)) +
+  geom_line(linewidth = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Daily vaccination rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Pastel1", name = "", direction = -1) +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") 
+
+```
+
+In the first weeks of the vaccination campaign the fully vaccination percentage of the oldest group is a lot bigger than in the youngest group (3th-4th wave) as they were vaccination before the younger population. In fact, from the 5th wave the rate of fully vaccination of people older than 70 years old is nearly zero.
+
+`r fig_nums("vac_urban", "Boxplot of cumulated fully vaccination coverage in function of urban/rural areas")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  group_by(urban, abs) %>% 
+  summarise(
+    n_vac = tail(n_vac, 1),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_vac = n_vac*100/N
+  )
+
+ggplot(sdat, aes(x = urban, y = rate_vac, fill = urban)) + 
+        geom_boxplot(outlier.shape = NA, na.rm = TRUE) + 
+        geom_point(shape=21,position=position_jitterdodge()) +
+        ylab("Cumulative fully vaccinations %") +
+        scale_fill_manual(name = "", values = c("#CCEBC5", "#DECBE4"), guide = "none") +
+        xlab("") +
+        theme_minimal()
+```
+
+We see that in general urban areas have a a little bit percentage of cumulative vaccinations.
+
+# Analysis
+
+We would like to assess the effect of the fully vaccinated weekly percentage in each area and each time. We will consider lagged values of the weekly percentage of vaccination, as being fully vaccinated doesn't give you inmediate inmutity and also the virus has an incubation time.
+
+Furthermore, this is a complicated task as we're trying the assess a causal effect of a temporal variable and the conditions of the pandemic changes in time (testing efforts, covid-19 variants, restrictions in place...) so there can be many potential confounders. Because of this, we will try to stratify the period of analysis considering waves that have similar pandemic conditions. Nevertheless, we think that taking the expected values calculated at each week we're intrinsically controlling by the temporal conditions of the pandemic in all the territory although differences between the areas that change across time might still have a confounding role in the effect of study. 
+
+First, we will consider all the period. We will take one week more from the start because we want to study the effect of the lagged vaccination. Thus, we will start at the week of 2021-01-24.
+
+Second, we will consider only the period between the beginning of the vaccination campaign (2021-01-03) in the 3rd wave until the end of the 4th wave (2021-06-13). This period is pretty homogeneous as the delta variant comes in the beginning of the 5th wave, the testing effort is the same and the restrictions in this period doesn't change much, dominated by the night curfew and the restrictions on meetings. Only in the beginning of may the night curfew restriction is lifted with the end of alarm state. The limitation of taking this period is that the percentage of fully vaccinated population is low in the beginning so it won't have a big effect on the outcomes.
+
+Third, we will consider only the period in the 5th wave where the delta variant is predominant and the restrictions are not very tight (only midnight curfew is imposed in a short period in the incidence pick). The limitation of this period is that the variability of the vaccination percentage across the areas drops a lot in the 5th wave as most of the areas have a similar fully vaccinated percentage.
+
+Finally, as we have seen the majority of people with 70 years old or more are vaccinated in the 3rd-4th wave. Thus, in this period we will study the effect of the fully vaccination on the hospitalization outcome only taking in account the population older than 70 years old. In this group of age it is believed that vaccination has a bigger effect.
+
+The models that have been considered in each scenario are the following:
+
+- Raw spatio-temporal model
+
+- Model adjusted only by the lagged vaccine effect
+
+- Model adjusted by the lagged vaccine effect + Spatial covariates
+
+- Model adjusted by the non-lagged vaccine effect + Spatial covariates
+
+- Model adjusted by the SIR of the lagged vaccine effect + Spatial covariates
+
+We will see that the results show that if we estimate the models with the SIR calculated in the whole period we generally see a strong effect of the vaccination, whereas if we calculate the SIR by week we also see a protective effect but it is close to significance. I think that because there is not enough variability on the vaccination in the different areas it's difficult for this variable to explaine the spatial variance of the outcomes, but it has more of an effect explaining the temporal variance. Thus, it's more complicated to get a effect on the model on the SIR by each week because it already incorporates intrinsically the temporal effect introducing the expected values of each week as an offset. Nevertheless, the results on the SIR with expected values in the whole period might still be confounded, although stratifying by waves, because we are trying to explain a quadratic effect of the vaccination in the geenral temporal trend with a linear one. 
+
+## All period
+
+`r fig_nums("plot_evo_vac_all", "Plot of the evolution of the distribution of fully vaccinated percentage between areas (the median along with the interquantile range is represented) across all the period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat <- dat %>% 
+  filter(data >= ymd("2021-01-24")) %>% 
+  rename_all(~ gsub("_vac", "", .x))
+
+ggplot(sdat, aes(x = data, y = rate*100, group = data)) + 
+  geom_boxplot() +
+  ylab("Fully vaccination %") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m")
+```
+
+### SIR by week
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "All", effect == "sir") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "All", effect == "sir") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "All", effect == "sir") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "All", effect == "sir") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentage in all the period between the hot/cold spots estimated by the raw model on the hospitalization outcome.
+
+`r fig_nums("hot_cold_spatial", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let's show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+We can't see clear differences on the lagged cumulative fully vaccination percentage between hot and cold spots.
+
+`r fig_nums("hot_cold_all", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+It seems that across all period hot spots have systematically lower lagged cumulative values of fully vaccination percentages than cold spots.
+
+`r tab_nums("dic_waic_vac_all", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+For the cases outcome, adjusted models improve the model. For the hospitalization outcome, vaccination model alone fits better the data but adjusting by covariates doesn't fit better the data.
+
+`r tab_nums("hp_vac_cases_all", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination has a protective effect of 6% at the significance limit. Considering 2-week lags this effect disappears.
+
+$\phi$ values increase for adjusted models.
+
+`r tab_nums("var_exp_vac_cases_all", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance increases in detriment of the temporal and spatio-temporal variance.
+
+`r tab_nums("hp_vac_hosp_all", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination has a protective effect of 6% on the risk of hospitalization very at limit of significance and when adjusting by covariates the effect decreases slightly to 4% and is at limit of significance. Moreover, considering 2-week lags it decreases to 3%. 
+
+The role of the structural spatial effect increases a little bit when adjusted by the vaccination and decreases when adjusting further by covariates.
+
+`r tab_nums("var_exp_vac_hosp_all", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases for the adjusted models in benefit of the spatio-temporal variance.
+
+### SIR whole period
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "All", effect == "sir2") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "All", effect == "sir2") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "All", effect == "sir2") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "All", effect == "sir2") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentage in all the period between the hot/cold spots estimated by the raw model on the hospitalization outcome.
+
+`r fig_nums("hot_cold_spatial_2", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let's show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp_2", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+We can't see clear differences on the lagged cumulative fully vaccination percentage between hot and cold spots.
+
+`r fig_nums("hot_cold_all_2", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+It seems that across all period hot spots have systematically lower lagged cumulative values of fully vaccination percentages than cold spots. We see that with the SIR calculated using the whole period hot spots are found in the incidence peaks, meanwhile in the flat incidence periods there are few areas considered hot spots.
+
+`r tab_nums("dic_waic_vac_all_2", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+For the cases outcome, adjusted models fit better the data. For the hospitalization outcome, adjusted models don't fit better the data.
+
+`r tab_nums("hp_vac_cases_all_2", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination have a high protective effect of the 45% adjusted by covariates. Taking 2-week lags the effect disappears.
+
+The value of $\phi$ increases for the adjusted models.
+
+`r tab_nums("var_exp_vac_cases_all_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance slightly decreases in benefit of the temporal variance for the 1-week lagged vaccination effect, and increases taking 2-week lags.
+
+`r tab_nums("hp_vac_hosp_all_2", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+Lagged vaccination has a high protective effect of 66% on the risk of hospitalization. When adjusting by covariates the effect is still high (53%). Considering 2-week lags the effect is small at limit of the significance.
+
+The role of the structural spatial effect decreases for the adjusted models.
+
+`r tab_nums("var_exp_vac_hosp_all_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases in benefit of the temporal and spatio-temporal variance.
+
+## 3rd and 4th wave
+
+### All population
+
+`r fig_nums("plot_evo_vac", "Plot of the evolution of the distribution of fully vaccinated percentage between areas (the median along with the interquantile range is represented) across the 3rd and 4th wave")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9467643/ #article that studies the effect of vaccination
+sdat <- dat %>% 
+  filter(data >= ymd("2021-01-24"), data <= ymd("2021-06-13")) %>% 
+  rename_all(~ gsub("_vac", "", .x))
+
+ggplot(sdat, aes(x = data, y = rate*100, group = data)) + 
+  geom_boxplot() +
+  ylab("Fully vaccination %") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m")
+
+```
+
+#### SIR by week
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "3rd-4th wave", effect == "sir") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "3rd-4th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "3rd-4th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "3rd-4th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentages in all the period between hospitalization hot/cold spots estimated by the raw model.
+
+`r fig_nums("hot_cold_spatial1", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let’s show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp1", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In the third wave, spatio-temporal hot spots have lower percentages of the lagged fully vaccination, meanwhile in the four wave differences are not clear.
+
+`r fig_nums("hot_cold_all1", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In both waves it seems that hot spots have lower percentages of vaccination.
+
+`r tab_nums("dic_waic_vac1", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+For both outcomes, adjusted models perform better.
+
+`r tab_nums("hp_vac_cases1", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination has a protective effect over the SIR of cases (5%) when adjusted by covariates. The effect disappears considerin 2-week lags.
+
+The role of the structural spatial effect increases a little bit when adjusting by the vaccination and the covariates.
+
+`r tab_nums("var_exp_vac1", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+Values are very similar.
+
+`r tab_nums("hp_vac_hosp1", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lag)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination effect is at limit of the significance (3% alone and 2% when adjusting by covariates).
+
+The role of the structured effect decreases for the adjusted models by the covariates.
+
+`r tab_nums("var_exp_vac_hosp1", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance slightly decreases for the adjusted models in benefit of the spatio-temporal variance.
+
+#### SIR whole period
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "3rd-4th wave", effect == "sir2") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "3rd-4th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "3rd-4th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "3rd-4th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentages in all the period between hospitalization hot/cold spots estimated by the raw model.
+
+`r fig_nums("hot_cold_spatial1_2", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let’s show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp1_2", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Hot spots have slightly lower percentages of vaccination between hot/cold spots given by the spatio-temporal effect.
+
+`r fig_nums("hot_cold_all1_2", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Hot spots have lower percentages of vaccination for this period. We can see how considering SIR for the whole periods in the beginning of the 3rd wave because there is a small incidence of hospitalizations there're almost no hot spots.
+
+`r tab_nums("dic_waic_vac1_2", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+For both outcomes, adjusted models perform better.
+
+`r tab_nums("hp_vac_cases1_2", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+Vaccination has a protective effect of 16%. Considering 2-week lags this effect disappears.
+
+The role of the structural spatial effect increases for the adjusted model.
+
+`r tab_nums("var_exp_vac1_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance increases in detriment of the temporal variance. The spatio-temporal variance also increases.
+
+`r tab_nums("hp_vac_hosp1_2", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination effect has a protective effect of the 14% adjusted by covariates. Considering 2-week lags the effect is very small at limit of significance.
+
+The role of the structured effect decreases for the adjusted models.
+
+`r tab_nums("var_exp_vac_hosp1_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+Adjusted model with vaccination and covariates has a lower spatial variance and higher spatio-temporal one.
+
+### Population >= 70 years old
+
+`r fig_nums("plot_evo_vac", "Plot of the evolution of the distribution of fully vaccinated percentage between areas (the median along with the interquantile range is represented) across the 3rd and 4th wave")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9467643/ #article that studies the effect of vaccination
+sdat <- dat_70 %>% 
+  rename_all(~ gsub("_vac", "", .x)) %>% 
+  mutate(
+    #We put rates higher than 1 to 1
+    rate = case_when(
+      rate > 1 ~ 1,
+      TRUE ~ rate
+    )
+  )
+
+ggplot(sdat, aes(x = data, y = rate*100, group = data)) + 
+  geom_boxplot() +
+  ylab("Fully vaccination %") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m")
+
+```
+
+#### SIR by week
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- ndat_sae_70 %>% 
+  filter(effect == "sir")
+```
+
+`r tab_nums("hp_vac_hosp1_70", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map(res, function(x) {
+      
+      est <- summary(x)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- x$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(hp) %>% 
+  unnest(hp) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 4
+  ) %>% 
+  pack_rows(
+    "Random effects", 5, 8
+  )
+```
+
+Now, the vaccination has a protective effect of 5% very close to significance. Urban areas have a risk effect of 27% and SI index a risk effect of 15%.
+
+`r tab_nums("var_exp_vac_hosp1_70", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(contains("Precision"))
+
+names(taula) <- c("Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+#### SIR whole period
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- ndat_sae_70 %>% 
+  filter(effect == "sir2")
+```
+
+`r tab_nums("hp_vac_hosp1_70_2", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map(res, function(x) {
+      
+      est <- summary(x)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- x$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(hp) %>% 
+  unnest(hp) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 4
+  ) %>% 
+  pack_rows(
+    "Random effects", 5, 8
+  )
+```
+
+The vaccination has a bigger protective effect of 27% over hospitalizations. The SI index has a risk effect of 15% and the urban areas a risk effect of 25%.
+
+`r tab_nums("var_exp_vac_hosp1_70_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(contains("Precision"))
+
+names(taula) <- c("Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## 5th wave
+
+`r fig_nums("plot_evo_vac2", "Plot of the evolution of the distribution of fully vaccinated percentage between areas (the median along with the interquantile range is represented) across the 5th wave")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9467643/ #article that studies the effect of vaccination
+sdat <- dat %>% 
+  filter(data >= ymd("2021-06-13"), data <= ymd("2021-11-02")) %>% 
+  rename_all(~ gsub("_vac", "", .x)) 
+
+ggplot(sdat, aes(x = data, y = rate*100, group = data)) + 
+  geom_boxplot() + 
+  ylab("Fully vaccination %") +
+  expand_limits(y = 0) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m")
+```
+
+### SIR by week
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "5th wave", effect == "sir") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "5th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "5th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "5th wave", effect == "sir") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentages in all the period between hospitalization hot/cold spots estimated by the raw model.
+
+`r fig_nums("hot_cold_spatial2", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let’s show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp2", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In the beginning there are no differences but after august spatio-temporal hot spots have lower values of vaccination.
+
+`r fig_nums("hot_cold_all2", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Hot spots have systematically lower cumulated values of fully vaccination percentages than cold spots.
+
+`r tab_nums("dic_waic_vac2", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+Adjusted models perform better than the raw model in the cases outcome. For the hospitalization outcome, adjusting doesn't improve the model.
+
+`r tab_nums("hp_vac_cases2", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lag)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination has a protective effect of 22% and considering 2-week lags the effect is of 7%.
+
+The role of the structural spatial effect increases.
+
+`r tab_nums("var_exp_vac2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The percentage values are very similar.
+
+`r tab_nums("hp_vac_hosp2", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lag)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+Vaccination has a high protective effect (42%) and the effect is still high when adjusted by covariates (17%). Considering 2-week lags the effect is small at limit of significance.
+
+The role of the structural effect decreases when adjusted by covariates.
+
+`r tab_nums("var_exp_vac_hosp2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases in benefit of the temporal and spatio-temporal variance. variance increases when adjusting only by the vaccination in detriment of the spatial variance.
+
+<!-- `r fig_nums("spatial_rr_vac", "Map of the posterior mean estimates of the residual spatial effect")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2 -->
+
+<!-- rr_spatial <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)])) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(outcomes, rr) %>%  -->
+<!--   unnest(rr)  -->
+
+<!-- map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr) -->
+<!-- map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr) -->
+
+<!-- p1 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = rr_cas)) + -->
+<!--   scale_fill_gradient2( -->
+<!--     midpoint = 1, low = "blue", mid = "white", high = "red" -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Cases") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p2 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = rr_hosp)) + -->
+<!--   scale_fill_gradient2( -->
+<!--     midpoint = 1, low = "blue", mid = "white", high = "red" -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Hospitalization") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p1 + p2 -->
+<!-- ``` -->
+
+<!-- `r fig_nums("spatial_p_vac", "Map of the posterior probability that the relative risk of the spatial pattern effect exceeds the threshold 1")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- #We can also plot the posterior probability that the spatial effect exceeds the threshold 0 -->
+<!-- # https://martablangiardo.github.io/Practical9/#5_Spatio-temporal_model_(type_I_interaction) -->
+<!-- map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2 -->
+
+<!-- p_spatial <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)})) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(outcomes, p) %>%  -->
+<!--   unnest(p) %>%  -->
+<!--   mutate(p_cat = case_when( -->
+<!--           p <= 0.2 ~ 1, -->
+<!--           p < 0.8 ~ 2, -->
+<!--           TRUE ~ 3 -->
+<!--          ), -->
+<!--          p_cat = factor(p_cat, levels = 1:3, labels = c("(0, 0.2]", "0.2-0.8", "[0.8, 1]")))  -->
+
+
+<!-- map$p_cas <- p_spatial %>% filter(outcomes == "cas") %>% pull(p_cat) -->
+<!-- map$p_hosp <- p_spatial %>% filter(outcomes == "hosp") %>% pull(p_cat) -->
+
+<!-- p1 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = p_cas)) + -->
+<!--   scale_fill_manual( -->
+<!--     values = c("#42e7e9", "white", "#bd1816") -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Cases") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p2 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = p_hosp)) + -->
+<!--   scale_fill_manual( -->
+<!--     values = c("#42e7e9", "white", "#bd1816") -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Hospitalization") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p1 + p2 -->
+
+<!-- ``` -->
+
+<!-- `r fig_nums("spatial_rr_struc_vac", "Map of the posterior mean estimates of the spatial pattern effect (only the structured one)")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2 -->
+
+<!-- rr_spatial <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea) + nrow(map)])) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(outcomes, rr) %>%  -->
+<!--   unnest(rr)  -->
+
+<!-- map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr) -->
+<!-- map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr) -->
+
+<!-- p1 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = rr_cas)) + -->
+<!--   scale_fill_gradient2( -->
+<!--     midpoint = 1, low = "blue", mid = "white", high = "red" -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Cases") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p2 <- ggplot(map) +  -->
+<!--   geom_sf(aes(fill = rr_hosp)) + -->
+<!--   scale_fill_gradient2( -->
+<!--     midpoint = 1, low = "blue", mid = "white", high = "red" -->
+<!--   ) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.ticks = element_blank(), -->
+<!--     axis.text = element_blank() -->
+<!--   ) + -->
+<!--   ggtitle("Hospitalization") + -->
+<!--   theme(plot.margin = margin(-2, 0, -2, 0, "cm")) -->
+
+<!-- p1 + p2 -->
+<!-- ``` -->
+
+<!-- `r fig_nums("temp_rr_vac", "Plot of the posterior mean estimates of the temporal trends of each week")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- #Temporal trends -->
+<!-- rr_temp <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     rr = map(res, ~.x$summary.random$idtime) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(outcomes, rr) %>%  -->
+<!--   unnest(rr) %>%  -->
+<!--   dplyr::select(outcomes, mean, "0.025quant", "0.975quant") %>%  -->
+<!--   mutate_if(is.numeric, exp) -->
+
+<!-- sdat_cat <- dat_cat %>%  -->
+<!--   filter(data >= min(sdat$data), data <=max(sdat$data)) -->
+
+<!-- srr_temp <- rr_temp %>%  -->
+<!--   filter(outcomes == "cas") -->
+
+<!-- plot_temp <- tibble(data = unique(sdat$data), rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`) -->
+
+<!-- p1 <- ggplot() + -->
+<!--   geom_bar(data = sdat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+ -->
+<!--   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") + -->
+<!--   theme_classic() +  -->
+<!--   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) + -->
+<!--   #Second axis: -->
+<!--   geom_point(data = plot_temp, aes(x = data, y = rr*750), alpha = 0.5) + -->
+<!--   geom_line(data = plot_temp, aes(x = data, y = rr*750), alpha = 0.5) + -->
+<!--   geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*750, ymax = rr_uci*750), alpha = 0.5, fill = "grey70") + -->
+<!--   geom_hline(yintercept = 1*750, color = "black", linetype = "dashed", alpha = 0.5) + -->
+<!--   scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./750, name = "Temporal effect")) -->
+
+<!-- srr_temp <- rr_temp %>%  -->
+<!--   filter(outcomes == "hosp") -->
+
+<!-- plot_temp <- tibble(data = unique(sdat$data), rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`) -->
+
+<!-- p2 <- ggplot() + -->
+<!--   geom_bar(data = sdat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+ -->
+<!--   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") + -->
+<!--   theme_classic() +  -->
+<!--   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) + -->
+<!--   #Second axis: -->
+<!--   geom_point(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) + -->
+<!--   geom_line(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) + -->
+<!--   geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*30, ymax = rr_uci*30), alpha = 0.5, fill = "grey70") + -->
+<!--   geom_hline(yintercept = 1*30, color = "black", linetype = "dashed", alpha = 0.5) + -->
+<!--   scale_y_continuous(name = "Hospitalization rate", sec.axis = sec_axis(~./30, name = "Temporal effect")) -->
+
+<!-- p1/p2 -->
+
+<!-- #The spatio-temporal trend cannot be represented as we have too many areas and too many weeks... -->
+<!-- ``` -->
+
+<!-- `r fig_nums("sptemp_rr_vac", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- dat_add <- sdat %>%  -->
+<!--   mutate(ID = row_number()) %>%  -->
+<!--   dplyr::select(ID, data, idarea) -->
+
+<!-- rr_sp_temp <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     rr = map(res, ~.x$summary.random$idareatime) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(outcomes, rr) %>%  -->
+<!--   unnest(rr) %>%  -->
+<!--   dplyr::select(outcomes, ID, rr = mean) %>%  -->
+<!--   mutate( -->
+<!--     rr = exp(rr) -->
+<!--   ) %>%  -->
+<!--   full_join(dat_add, by = "ID") -->
+
+<!-- srr_sp_temp <- rr_sp_temp %>%  -->
+<!--   filter(outcomes == "cas") -->
+
+<!-- p1 <- ggplot(data = srr_sp_temp, aes(x = data, y = rr, group = factor(idarea), color = factor(idarea))) + -->
+<!--   geom_line(alpha = 0.3) + -->
+<!--   geom_hline(yintercept = 1, color = "black", linetype = "dashed") + -->
+<!--   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") + -->
+<!--   scale_color_discrete(guide = "none") + -->
+<!--   theme_classic() +  -->
+<!--   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) + -->
+<!--   ggtitle("Cases") -->
+
+<!-- srr_sp_temp <- rr_sp_temp %>%  -->
+<!--   filter(outcomes == "hosp") -->
+
+<!-- p2 <- ggplot(data = srr_sp_temp, aes(x = data, y = rr, group = factor(idarea), color = factor(idarea))) + -->
+<!--   geom_line(alpha = 0.3) + -->
+<!--   geom_hline(yintercept = 1, color = "black", linetype = "dashed") + -->
+<!--   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") + -->
+<!--   scale_color_discrete(guide = "none") + -->
+<!--   theme_classic() +  -->
+<!--   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) + -->
+<!--   ggtitle("Hospitalization") -->
+
+<!-- p1/p2 -->
+
+<!-- ``` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- sdat_sae <- ndat_sae_vac %>%  -->
+<!--   filter(period == "5th wave", outcomes == "hosp") -->
+<!-- ``` -->
+
+<!-- We can calculate which are the hot/mild/cold spots for each type of effect and compare the vaccination rates between these groups to illustrate the effect of the vaccination. In the article hot spots are calculated as those areas having probability greater or equal than 0.8 while cold spots are those that have less than 0.8. We think that we could have three groups for the three following tresholds over the posterior probability of the RR being greater than 1: < 0.2 (cold spot), 0.2-0.8 (mild spot) and >0.8 (hot spot). -->
+
+<!-- `r fig_nums("hot_cold_spatial", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- p_spatial <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)})) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(p) %>%  -->
+<!--   unnest(p) %>%  -->
+<!--   mutate(p_cat = case_when( -->
+<!--           p <= 0.2 ~ 1, -->
+<!--           p < 0.8 ~ 2, -->
+<!--           TRUE ~ 3 -->
+<!--          ), -->
+<!--          p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%  -->
+<!--   rownames_to_column("idarea") %>%  -->
+<!--   mutate(idarea = as.integer(idarea)) -->
+
+<!-- plot_vac <- sdat %>%  -->
+<!--   full_join(p_spatial, by = "idarea") -->
+
+<!-- ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +  -->
+<!--   geom_boxplot() +  -->
+<!--   ylab("Fully vaccination %") + -->
+<!--   expand_limits(y = c(0, 100)) +  -->
+<!--   scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) + -->
+<!--   xlab("") -->
+<!-- ``` -->
+
+<!-- From now on, we will only compare the hot spots with the cold spots as with three groups it will be difficult to illustrate the evolution of their differences over the time period. -->
+
+<!-- `r fig_nums("hot_cold_spatial_temp", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- p_spatial_temp <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)})) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(p) %>%  -->
+<!--   unnest(p) %>%  -->
+<!--   mutate(p_cat = case_when( -->
+<!--           p <= 0.2 ~ 1, -->
+<!--           p < 0.8 ~ 2, -->
+<!--           TRUE ~ 3 -->
+<!--          ), -->
+<!--          p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%  -->
+<!--   rownames_to_column("idareatime") %>%  -->
+<!--   mutate(idareatime = as.integer(idareatime)) -->
+
+<!-- plot_vac <- sdat %>%  -->
+<!--   full_join(p_spatial_temp, by = "idareatime") %>%  -->
+<!--   filter(p_cat != "Mild spot") %>%  -->
+<!--   mutate(p_cat = droplevels(p_cat)) -->
+
+<!-- ggplot(plot_vac, aes(x = factor(data), y = rate*100, fill = p_cat)) +  -->
+<!--   geom_boxplot(outlier.shape = NA) +  -->
+<!--   ylab("Fully vaccination %") + -->
+<!--   expand_limits(y = c(0, 100)) +  -->
+<!--   scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) -->
+<!-- ``` -->
+
+<!-- `r fig_nums("hot_cold_all", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect")` -->
+
+<!-- ```{r echo=FALSE, warning=FALSE, message=FALSE} -->
+<!-- p_rr <- sdat_sae %>%  -->
+<!--   mutate( -->
+<!--     p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x})) -->
+<!--   ) %>%  -->
+<!--   dplyr::select(p) %>%  -->
+<!--   unnest(p) %>%  -->
+<!--   mutate(p_cat = case_when( -->
+<!--           p <= 0.2 ~ 1, -->
+<!--           p < 0.8 ~ 2, -->
+<!--           TRUE ~ 3 -->
+<!--          ), -->
+<!--          p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%  -->
+<!--   rownames_to_column("idareatime") %>%  -->
+<!--   mutate(idareatime = as.integer(idareatime)) -->
+
+<!-- plot_vac <- sdat %>%  -->
+<!--   full_join(p_rr, by = "idareatime") %>%  -->
+<!--   filter(p_cat != "Mild spot") %>%  -->
+<!--   mutate(p_cat = droplevels(p_cat)) -->
+
+<!-- ggplot(plot_vac, aes(x = factor(data), y = rate*100, fill = p_cat)) +  -->
+<!--   geom_boxplot(outlier.shape = NA) +  -->
+<!--   ylab("Fully vaccination %") + -->
+<!--   expand_limits(y = c(0, 100)) +  -->
+<!--   scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) -->
+<!-- ``` -->
+
+### SIR whole period
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  ndat_sae_raw %>% 
+    filter(period == "5th wave", effect == "sir2") %>% 
+    mutate(model = "Raw"),
+  ndat_sae_vac_nocovar %>% 
+    filter(period == "5th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination"),
+  ndat_sae_vac %>% 
+    filter(period == "5th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination + Covariates"),
+  ndat_sae_vac_lag2 %>% 
+    filter(period == "5th wave", effect == "sir2") %>% 
+    mutate(model = "Vaccination (2-week lag)")
+) 
+```
+
+First, let's illustrate the differences in the cumulative fully vaccination percentages in all the period between hospitalization hot/cold spots estimated by the raw model.
+
+`r fig_nums("hot_cold_spatial2_2", "Difference on the vaccination rates between hot/mild/cold spots given by the residual spatial effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- sdat_sae %>%
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>%
+  dplyr::select(p) %>%
+  unnest(p) %>%
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>%
+  rownames_to_column("idarea") %>%
+  mutate(idarea = as.integer(idarea))
+
+plot_vac <- sdat %>%
+  filter(data == max(data)) %>% 
+  full_join(p_spatial, by = "idarea") 
+
+ggplot(plot_vac, aes(x = p_cat, y = rate*100, fill = p_cat)) +
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Fully vaccination (%)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+Hot spots have lower fully vaccination percentages than cold spots, so we might think that the vaccination could explain some of the spatial effect.
+
+Let’s show the differences on the cumulative fully vaccination percentage of the previous week between the estimated hot/cold spots of the actual week, for all the weeks of the study period.
+
+`r fig_nums("hot_cold_spatial_temp2_2", "Difference on the vaccination rates between hot/cold spots given by the residual spatio-temporal effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In the beginning there are no differences but after august spatio-temporal hot spots have slightly lower values of vaccination.
+
+`r fig_nums("hot_cold_all2_2", "Difference on the vaccination rates between hot/cold spots given by the posterior RR effect of the raw model on hospitalizations")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_rr <- sdat_sae %>% 
+  filter(model == "Raw", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_vac <- sdat %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_vac, aes(x = data, y = lag_rate1*100, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Lagged fully vaccination (%)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Hot spots have a lot lower vaccination percentages than cold spots. We can see how considering SIR for the whole periods in lower hospitalization incidence weeks there are almost no hot spots.
+
+`r tab_nums("dic_waic_vac2_2", "Description of estimated DIC and WAIC for all the models")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic)
+  ) %>%
+  dplyr::select(model, outcomes, dic, waic) %>%
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>%
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Cases" = 2, "Hospitalization" = 2))
+```
+
+Adjusted models don't improve the raw model.
+
+`r tab_nums("hp_vac_cases2_2", "Estimated fixed effects and hyperparameters for each model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+The vaccination has a protective effect of the 24%, adjusted by covariates. Considering 2-week lags, the effect decreases to 7%.
+
+The role of the structural spatial effect decreases.
+
+`r tab_nums("var_exp_vac2_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The percentage of spatial variance slightly decreases in benefit of the temporal variance for the adjusted model of vaccination + covariates.
+
+`r tab_nums("hp_vac_hosp2_2", "Estimated fixed effects and hyperparameters for each model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Fully vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Fully vaccination (2-week lags)"))
+        ) %>% 
+        mutate(
+          order = 1
+        )
+      
+      hp <- y$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        rownames_to_column(var = "var") %>% 
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+       
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(order) %>% 
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula)[1] <- ""
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 5
+  ) %>% 
+  pack_rows(
+    "Random effects", 6, 9
+  )
+```
+
+Vaccination has a big protective effect of 51% that remains high when adjusted by covariates (40%). Considering 2-week lags the effect decreases to 3% at limit of significance. 
+
+The role of the structural effect decreases when adjusted.
+
+`r tab_nums("var_exp_vac_hosp2_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalization outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The temporal variance decreases in benefit of the temporal variance mainly. 

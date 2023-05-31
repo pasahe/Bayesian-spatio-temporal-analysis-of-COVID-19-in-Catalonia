@@ -1,0 +1,5375 @@
+---
+title: "Bayesian hierarchical models for space-temporal modeling of COVID-19 in Catalonia"
+#Data d'avui: Surt segons idioma d R
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+ 
+knit: (function(inputFile, encoding) {
+ 
+  rmarkdown::render(inputFile,
+      encoding=encoding, 
+      output_file=file.path(dirname('C:\\Users\\psatorra\\Documents\\TFM'),'TFM/5_Productes/Analysis_Spatial_Temporal_v3.html')) })
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    theme: cosmo 
+    highlight: tango
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r results='hide', echo=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(gtsummary)
+library(INLA)
+library(captioner)
+library(dplyr)
+library(kableExtra)
+library(ggplot2)
+library(effectsize)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(stringr)
+library(sf)
+library(patchwork)
+library(viridis)
+library(GGally)
+library(mvtsplot)
+library(usdm)
+library(tibble)
+library(ggridges)
+library(plotly)
+library(DT)
+
+#Enumerar taules i figures
+fig_nums <- captioner(prefix = 'Figure')
+tab_nums <- captioner(prefix = 'Table')
+citef <- pryr::partial(fig_nums, display = 'cite')
+citet <- pryr::partial(tab_nums, display = 'cite')
+###############
+# setwd('P:/TFM')
+setwd('C:\\Users\\psatorra\\Documents\\TFM')
+dades_ana <- '2_Dades/2_Analisi'
+
+#Load data by ABS and date
+load(file.path(dades_ana, "dat.Rda"))
+
+#Load all incidences from the global of CAT
+load(file.path(dades_ana, "dat_cat.Rda"))
+
+#Load all incidences from each health regions
+load(file.path(dades_ana, "dat_rs.Rda"))
+
+#Load shapefileT
+load(file.path(dades_ana, "shapefileT.Rda"))
+
+#Load population
+load(file.path(dades_ana, "pob_abs.Rda"))
+
+#Load cases for each outcome
+load(file.path(dades_ana, "dat_edat.Rda"))
+load(file.path(dades_ana, "dat_hosp.Rda"))
+
+#Load covariates
+load(file = file.path(dades_ana, "Covariates/dat_covar.Rda"))
+
+#Spatial models
+#Load DIC & WAIC of spatial models
+load(file.path(dades_ana,"Spatial/sp_dic_waic.Rda"))
+#Load RR of spatial models
+load(file.path(dades_ana, "Spatial/res_sp.Rda"))
+#Load hyperparameters of BYM2 spatial model
+load(file.path(dades_ana, "Spatial/bym2_hp.Rda"))
+
+#Spatio-Temporal models
+#Load DIC & WAIC of spatio-temporal base models
+load(file.path(dades_ana, "SpatioTemporal/st_dic_waic_base.Rda"))
+#Load DIC & WAIC of spatio-temporal models with different type of interactions
+load(file.path(dades_ana, "SpatioTemporal/st_dic_waic.Rda"))
+load(file.path(dades_ana, "SpatioTemporal/st_dic_waic_sir2.Rda"))
+
+#Load the spatio-temporal models with type II interaction (sir & sir2)
+load(file = file.path(dades_ana, "SpatioTemporal/ndat_sae_II.Rda"))
+
+#Spatial covariates
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_raw.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_urban.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_int.Rda"))
+load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_comp.Rda"))
+
+#Les dades de mobilitat no les carregarem perquè són mensuals (no tenim suficient variabilitat...)
+#Les dades de restriccions les hauríem de processar abans d'incorporar-les com a covariants
+
+#Create var-lab dictionary for covariates
+var_lab <- tibble(var = c("perc_women", "perc_70", "perc_70_cat", "dens", "dens_cat", "urban", "isc"),
+                  lab = c("Percentage of women (%)","Population >=70 years (%)","Population  >= 70 years (categories)","Density (hab/km2)","Density (categories)", "Urban/Rural areas", "Socioeconomic index"),
+                  lab_legend = c("%","%", "%", "hab/km2", "hab/km2", "", "SI")
+                  )
+
+#Create var-lab dictionary for socieoconomic index components
+var_lab2 <- tibble(var = c("poblacio_exempta_de_copagament_farmaceutic", "poblacio_amb_rendes_inferiors_a_18_000_euros", "poblacio_amb_rendes_superiors_a_100_000_euros", "poblacio_amb_ocupacions_manuals", "poblacio_amb_nivell_dinstruccio_insuficient", "taxa_de_mortalitat_prematura", "hospitalitzacions_evitables"),
+                  lab = c("Population exempted from pharmaceutical co-payment", "Population income < 18k€", "Population income > 100k€", "Population manual employment", "Population with insufficient education", "Premature mortality rate", "Avoidable hospitalisations"),
+                  lab_legend = rep("", 7)
+                  )
+```
+
+This report contains all the tables and figures with the results of the study. It consist of four parts:
+
+- **Description** which contains the tables and figures of the different study variables.
+
+- **Spatial models** that model only the spatial distribution of the outcomes of the study.
+
+- **Spatio-temporal models** that incorporate the temporal dimension on the previous model.
+
+- **Spatio-temporal models adjusted by spatial covariates** which adjusts the previous model by different spatial covariates and estimates the fixed effects.
+
+- **Vaccination** that it's included in the other document and studies the effect of the vaccination over the outcomes of the study.
+
+# Description
+
+## ABS characteristics
+
+We have different demographic and socio-economic characteristics for the ABS. Demographic characteristics are the density of the population and the variable that indicates if an area is urban or rural. Socio-economic characteristics are the seven standardised variables that represent seven different socio-economic indicators collected in 2017. The socioeconomic index is an index that combines all of them and, as higher is the value, the area has more poverty.
+
+Here, it is described the different characteristics of the Basic Health Areas (ABS), that is the spatial unit of our study.
+
+`r tab_nums("tab_covar", "Description of different characterics by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+svar_lab <- var_lab %>% 
+  mutate(lab2 = map2(var, lab, ~as.formula(str_glue('{.x} ~ "{.y}"'))))
+
+theme_gtsummary_journal(journal = "jama")
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat_covar %>% 
+  dplyr::select(svar_lab$var) %>% 
+  tbl_summary(
+    label = svar_lab$lab2,
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover")) 
+```
+
+The density has a lot of variance between the areas, whereas the other variables have little variance. Let's map these variables, we have to zoom in Barcelona because areas are very small in Barcelona and it is difficult to see its distribution.
+
+`r fig_nums("map_covar", "Map of each of the previous characteristics by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+dat_map <- st_as_sf(shapefileT) %>% 
+  left_join(dat_covar, by = "codi_abs")
+
+nmap <- var_lab %>% 
+  mutate(
+    map = pmap(list(var, lab, lab_legend), function(x, y, z) {
+      
+      cat <- ggplot(dat_map) + 
+            geom_sf(aes(fill = get(x))) +
+            theme_bw() +
+            theme(
+                axis.ticks = element_blank(),
+                axis.text = element_blank()
+            ) +
+            ggtitle(y)
+      
+      #map of bcn
+      bcn <- ggplot(dat_map) + 
+             geom_sf(aes(fill = get(x))) +
+             theme_bw() +
+             theme(
+                 axis.ticks = element_blank(),
+                 axis.text = element_blank()
+             ) +
+             coord_sf(
+               xlim = c(2.1, 2.25),
+               ylim = c(41.32, 41.475)
+             ) +
+             theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+                   panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+                   )
+      
+      if(grepl("_cat$", x)) {
+        # Categoric variable  
+        cat <-  cat + scale_fill_viridis(name = z, option = "magma", direction = -1, discrete = TRUE) 
+        bcn <- bcn + scale_fill_viridis(name = z, option = "magma", direction = -1, discrete = TRUE, guide = "none") 
+      } else if(x == "urban") {
+        cat <-  cat + scale_fill_manual(name = z, values = c("#CCEBC5", "#DECBE4")) 
+        bcn <-  bcn + scale_fill_manual(name = z, values = c("#CCEBC5", "#DECBE4"), guide = "none") 
+      } else {
+        #Continuous variable
+        cat <-  cat + scale_fill_viridis(name = z, option = "magma", direction = -1) 
+        bcn <-  bcn + scale_fill_viridis(name = z, option = "magma", direction = -1, guide = "none") 
+      }
+      
+  cat + 
+    annotation_custom(
+      grob = ggplotGrob(bcn),
+      xmin = 2,
+      xmax = 3.8,
+      ymin = 40.5,
+      ymax = 41.4
+    ) +
+    geom_segment(
+      x = 2.1,
+      xend = 2.48,
+      y = 41.32,
+      yend = 40.52,
+      linewidth = 0.1
+    ) +
+    geom_segment(
+      x = 2.25,
+      xend = 3.33,
+      y = 41.48,
+      yend = 41.4,
+      linewidth = 0.1
+    ) +
+    geom_rect(
+      xmin = 2.1,
+      xmax = 2.25,
+      ymin = 41.32,
+      ymax = 41.48,
+      alpha = 0,
+      color = "black"
+    )
+      
+    })
+  )
+
+for(i in 1:nrow(nmap)) {
+  print(nmap$map[[i]])
+}
+
+```
+
+The density increases while approaching Barcelona and in areas very close to the other provinces. Compared to those areas, the other areas of Catalonia are of low density.
+
+Describe now the different socieconomic variables that are used to compute the previous socieconomic index.
+
+`r tab_nums("tab_covar_2", "Description table of the socioeconomic index components by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+svar_lab <- var_lab2 %>% 
+  mutate(lab2 = map2(var, lab, ~as.formula(str_glue('{.x} ~ "{.y}"'))))
+
+theme_gtsummary_journal(journal = "jama")
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+dat_covar %>% 
+  dplyr::select(svar_lab$var) %>% 
+  tbl_summary(
+    label = svar_lab$lab2,
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover")) %>% 
+  footnote(
+    general = c("Values are standardized by age (reference = 1)")
+  )
+```
+
+`r fig_nums("map_covar_2", "Map of each of the previous SE components by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+dat_map <- st_as_sf(shapefileT) %>% 
+  left_join(dat_covar, by = "codi_abs")
+
+nmap <- var_lab2 %>% 
+  mutate(
+    map = pmap(list(var, lab, lab_legend), function(x, y, z) {
+      
+      y <- gsub("\\(.*", "", y)
+      
+      cat <- ggplot(dat_map) + 
+            geom_sf(aes(fill = get(x))) +
+            theme_bw() +
+            theme(
+                axis.ticks = element_blank(),
+                axis.text = element_blank()
+            ) +
+            ggtitle(y) + 
+            scale_fill_gradient2(name = z, midpoint = 1, low = "blue", mid = "white", high = "red") 
+      
+      #map of bcn
+      bcn <- ggplot(dat_map) + 
+             geom_sf(aes(fill = get(x))) +
+             theme_bw() +
+             theme(
+                 axis.ticks = element_blank(),
+                 axis.text = element_blank()
+             ) +
+             coord_sf(
+               xlim = c(2.1, 2.25),
+               ylim = c(41.32, 41.475)
+             ) +
+             theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+                   panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+                   ) + 
+            scale_fill_gradient2(name = z, midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none") 
+      
+    cat + 
+    annotation_custom(
+      grob = ggplotGrob(bcn),
+      xmin = 2,
+      xmax = 3.8,
+      ymin = 40.5,
+      ymax = 41.4
+    ) +
+    geom_segment(
+      x = 2.1,
+      xend = 2.48,
+      y = 41.32,
+      yend = 40.52,
+      linewidth = 0.1
+    ) +
+    geom_segment(
+      x = 2.25,
+      xend = 3.33,
+      y = 41.48,
+      yend = 41.4,
+      linewidth = 0.1
+    ) +
+    geom_rect(
+      xmin = 2.1,
+      xmax = 2.25,
+      ymin = 41.32,
+      ymax = 41.48,
+      alpha = 0,
+      color = "black"
+    )
+      
+    })
+  )
+
+for(i in 1:nrow(nmap)) {
+  print(nmap$map[[i]])
+}
+```
+
+Looking at these maps we can see how the population income is inverse correlated and the population income < 18k is directly related to manual employment.
+
+## Outcomes
+
+We describe the outcomes of the study, COVID-19 reported cases and hospitalisations in this section. We will measure the outcomes in a weekly basis taking weekly incidence rates.
+
+### Cases
+
+Cases data goes from `r min(dat_cat$data)` to 2022-07-25, but we will consider as the study period the first complete week to the last complete week. The study period will start in the week of 2022-03-08 (first sunday) and will go until the week 2022-07-24 (last sunday).
+
+`r tab_nums("tab_cas_cum", "Descriptive table of the 2020 population, cumulative cases and rate of all ABS in the whole period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_cas = sum(n_cas),
+    #Mean pop
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_cas = n_cas*100/N
+  ) %>% 
+  dplyr::select(N, n_cas, rate_cas) %>% 
+  tbl_summary(
+    label = list(N ~ "ABS population (2020)",
+                 n_cas ~ "ABS cumulative cases counts",
+                 rate_cas ~ "ABS cumulative cases percentage (%)"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+`r tab_nums("tab_cas", "Descriptive table of weekly case incidence rate for all ABS across all the period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat %>% 
+  mutate(
+    rate_cas = rate_cas*100000
+  ) %>% 
+  dplyr::select(rate_cas) %>% 
+  tbl_summary(
+    label = list(rate_cas ~ "ABS weekly case rate"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+  wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+  TRUE ~ data_inici
+)
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_cas", "", .x))  %>% 
+  mutate(
+    xint = case_when(
+      data %in% data_inici ~ data
+    )
+  )
+
+```
+
+`r fig_nums("plot_cas", "Plot of the evolution of the weekly case rate per 100k habitants across the study period")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  ylab("7-day case rate (x100k hab.)")
+```
+
+The incidence of COVID-19 cases has high variability between the different waves with a low peak in the first wave due to the low testing efforts and an extreme big peak in the sixth wave due to the more contagious Omicron variant.
+
+`r fig_nums("map_cas", "Map of the cumulative case incidence percentage across all the study period for each ABS")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_cas = sum(n_cas),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_cas = n_cas*100/N
+  )
+
+map <- st_as_sf(shapefileT) %>% 
+  left_join(sdat, by = "abs")
+
+cat <- ggplot(map) + 
+       geom_sf(aes(fill = rate_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       # ggtitle("Cumulative case incidence percentage") +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1)
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rate_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1, guide = "none") +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+```
+
+To illustrate the variability of the cases cumulative percentage between ABS we will illustrate its values using a dot plot.
+
+`r fig_nums("dot_plot_cas", "Dot plot of the cumulative case incidence percentage across all the study period for each ABS")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+sdat <- dat %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_cas = sum(n_cas),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_cas = n_cas*100/N
+  )
+
+ggplot(sdat, aes(x = 1, y = rate_cas, fill = factor(1))) +
+  geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 0.5) +
+  expand_limits(y = c(15, 60)) +
+  scale_fill_discrete(guide = "none") +
+  scale_x_discrete(name = "", labels = "") +
+  ylab("Cumulative case incidence (%)") +
+  theme_minimal()
+```
+
+<!-- `r fig_nums("map_cas2", "Map of the overall median of weekly case incidence rate across all the study period for each ABS")` -->
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE} -->
+
+<!-- sdat <- dat %>%  -->
+<!--   group_by(abs) %>%  -->
+<!--   summarise( -->
+<!--     median = median(rate_cas)*100000 -->
+<!--   ) -->
+
+<!-- map <- st_as_sf(shapefileT) %>%  -->
+<!--   left_join(sdat, by = "abs") -->
+
+<!-- ggplot(map) +  -->
+<!--        geom_sf(aes(fill = median)) + -->
+<!--        theme_bw() + -->
+<!--        theme( -->
+<!--            axis.ticks = element_blank(), -->
+<!--            axis.text = element_blank() -->
+<!--        ) + -->
+<!--        ggtitle("Median of the weekly case incidence rate") + -->
+<!--        scale_fill_distiller(name = "", palette = "YlOrRd", direction = 1) -->
+<!-- ``` -->
+
+<!-- `r fig_nums("plot_cas_abs", "Plot of the weekly case incidence by each of the ABS along with the median across time")` -->
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE} -->
+<!-- #Method for plotting multivariate time series -->
+<!-- # https://www.jstatsoft.org/article/view/v025c01 -->
+<!-- dat_plot <- dat %>% -->
+<!--   dplyr::select(data, abs, rate_cas) %>% -->
+<!--   pivot_wider(names_from = abs, values_from = rate_cas) %>% -->
+<!--   dplyr::select(-data) -->
+
+<!-- abs_rs <- shapefileT@data %>% -->
+<!--   distinct(codi_abs, abs, NOMRS) -->
+
+<!-- nomrs_abs <- map(rev(sort(unique(abs_rs$NOMRS))), ~abs_rs %>% filter(NOMRS %in% .x) %>% pull(abs)) -->
+<!-- nomrs_abs <- do.call(c, nomrs_abs) -->
+<!-- dat_plot <- dat_plot[,nomrs_abs] -->
+
+<!-- mvtsplot(dat_plot, group = NULL, xtime = unique(dat$data), norm = c("global"), -->
+<!--          levels = 5, smooth.df = NULL, margin = TRUE, -->
+<!--          palette = "YlOrRd", rowstat = "median") -->
+<!-- ``` -->
+
+In the following plot, we will representate the heterogeneity of the cases incidence time-trend between the different health regions, that are aggregations of ABS.
+
+`r fig_nums("plot_cas_rs", "Plot of the weekly case incidence by each of the health regions along with the median across time")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+#Method for plotting multivariate time series
+# https://www.jstatsoft.org/article/view/v025c01
+dat_plot <- dat_rs %>% 
+  dplyr::select(data, NOMRS, rate_cas) %>% 
+  pivot_wider(names_from = NOMRS, values_from = rate_cas) %>% 
+  dplyr::select(-data)
+
+mvtsplot(dat_plot, group = NULL, xtime = unique(dat_rs$data), norm = c("global"),
+         levels = 5, smooth.df = NULL, margin = TRUE, 
+         palette = "YlOrRd", rowstat = "median")
+```
+
+<!-- `r fig_nums("plot_cas_rs2", "Plot the distribution of the weekly case incidence by each of the health regions")` -->
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE} -->
+<!-- #joy plot or ridgeline plot -->
+<!-- # https://r-charts.com/distribution/ggridges/?utm_content=cmp-true -->
+<!-- dat_plot <- dat_rs %>%  -->
+<!--   dplyr::select(data, NOMRS, rate_cas) %>%  -->
+<!--   mutate( -->
+<!--     NOMRS = as.factor(NOMRS) -->
+<!--   ) -->
+
+<!-- dat_plot$NOMRS <- factor(dat_plot$NOMRS, labels = c("Pirineu", "BCN", "Tarragona", "Central", "Girona", "Lleida", "Ebre")) -->
+
+<!-- ggplot(dat_plot, aes(x = data, y = rate_cas, fill = stat(y))) + -->
+<!--   geom_bar(stat = "identity") + -->
+<!--   theme_minimal() + -->
+<!--   facet_grid(NOMRS ~ .) + -->
+<!--   scale_fill_viridis_c(name = "", option = "magma", direction = -1) + -->
+<!--   ylab("Weekly case rate (x100k pop)") -->
+<!-- ``` -->
+
+Looking at the two previous plots, we can see some differences despite the fact that the pick in the 6th wave makes difficult the comparison in the other time periods because of the smaller scale. The waves have different intensity and duration in the different regions, specially in the first and fourth one. For example, the first wave is non-existent in Terres de l'Ebre in terms of the incidence of COVID-19 cases. In Lleida, there is even an additional wave in both outcomes between the first and the second wave that corresponds to the outbreak of the virus in the county of Segrià involved with the arrival of a lot of seasonal farm workers.
+
+Let's see the distribution of the cases by age and sex groups, to highlight the importance of controlling by sex and age when modeling the outcomes.
+
+`r fig_nums("sex_cas", "Total cumulative cases percentage in the whole period by sex groups")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_cas <- pob_abs %>% 
+  group_by(any, sexe, edat_cas) %>% 
+  summarise(NT = sum(N)) %>% 
+  rename(edat = edat_cas)
+
+plot_cas <- dat_edat %>% 
+    left_join(Tpob_cas %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n),
+              NT = unique(NT)) %>% 
+    group_by(sexe) %>% 
+    summarise(
+      n = sum(n),
+      NT = sum(NT)
+    ) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, Tratio)
+
+ggplot(plot_cas, aes(x = sexe, y = Tratio * 100, fill = sexe)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(breaks = seq(0, 100, by = 25)) +
+  expand_limits(y = 50) +
+  ylab("%") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_x_discrete(name = "", labels = c("Women", "Men"))
+```
+
+`r fig_nums("age_sex_cas", "Pyramid plot of the total cumulative cases percentage in the whole period by age and sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ Tedat_cas_total <- dat_edat %>% 
+    left_join(Tpob_cas %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n),
+              NT = unique(NT)) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, edat, Tratio)
+
+plot_cas <- Tedat_cas_total %>% 
+  mutate(
+    Tratio = case_when(
+      sexe == "Dona" ~ -Tratio,
+      TRUE ~ Tratio
+    )
+  )
+
+ggplot(plot_cas, aes(x = Tratio * 100, y = edat, fill = sexe)) +
+  geom_col() +
+  scale_x_continuous(breaks = seq(-100, 100, by = 25), labels = abs(seq(-100, 100, by = 25))) +
+  expand_limits(x = c(-75, 75)) +
+  xlab("%") +
+  ylab("Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", name = "", labels = c("Women", "Men")) 
+```
+
+In terms of the sex distribution, we see that women has higher percentage than men specifically in the lower ages 20-49. In terms of the age distribution, we see that the group with more cases is the 90+ group, meanwhile 0-9, 50-89 has the lowest case percentage. 
+
+We can also see the sex and age differences across time, plotting the time-trend of the rates for each sex and for different age groups.
+
+`r fig_nums("sex_cas_ts", "Evolution of the daily case rate in function of the sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_sexe <- pob_abs %>% 
+  group_by(any, sexe) %>% 
+  summarise(N = sum(N))
+
+plot_cas <- dat_edat %>% 
+  group_by(data, sexe) %>% 
+  summarise(n = sum(n)) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_sexe, by = c("any", "sexe")) %>% 
+  mutate(
+    ratio = n*100000/N,
+    sexe = factor(sexe, levels = c("Home", "Dona"))
+  )
+
+ggplot(plot_cas, aes(x = data, y = ratio, color = sexe, group = sexe)) +
+  geom_line(linewidth = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Week case rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1) 
+
+# ggplot(plot_cas, aes(x = data, y = ratio, fill = sexe)) +
+#   geom_area() +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   ylab("Week case rate (x100k hab.)") +
+#   xlab("") +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1) 
+```
+
+The two rates are nearly the same in the two different sexes, despite the rate women being a little bit high than the men in some times.
+
+`r fig_nums("age_cas_ts", "Evolution of the daily case rate in function of the age group (bigger or lower than 70 years)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_edat <- pob_abs %>% 
+  mutate(
+    edat_70 = case_when(
+      edat_cas %in% c("70-79", "80-89", "90+") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(any, edat_70) %>% 
+  summarise(N = sum(N))
+
+plot_cas <- dat_edat %>% 
+  mutate(
+    edat_70 = case_when(
+      edat %in% c("70-79", "80-89", "90+") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(data, edat_70) %>% 
+  summarise(n = sum(n)) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_edat, by = c("any", "edat_70")) %>% 
+  mutate(
+    ratio = n*100000/N
+  )
+
+# ggplot(plot_cas, aes(x = data, y = ratio, fill = edat_70)) +
+#   geom_area() +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   ylab("Daily case rate (x100k hab.)") +
+#   xlab("") +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Pastel1", name = "", direction = -1)
+
+ggplot(plot_cas, aes(x = data, y = ratio, color = edat_70, group = edat_70)) +
+  geom_line(linewidth = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Daily case rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Pastel1", name = "", direction = -1)
+
+```
+
+We see that in the 1st wave the rates of >= 70 years is a lot bigger than those of < 70 years due to the fact that reported cases were more associated to symptoms as the testing capacity was low. In the last two waves the opposite happens where the rate of < 70 years cases rate is a lot bigger than the one of the >= 70 year group, except for the last dates that it dominates again the group of >= 70 years. 
+
+`r fig_nums("cas_urban", "Boxplot of cumulated cases in function of urban/rural areas")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  group_by(urban, abs) %>% 
+  summarise(
+    n_cas = sum(n_cas),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_cas = n_cas*100/N
+  )
+
+ggplot(sdat, aes(x = urban, y = rate_cas, fill = urban)) + 
+        geom_boxplot(outlier.shape = NA, na.rm = TRUE) + 
+        geom_point(shape=21,position=position_jitterdodge()) +
+        ylab("Cumulative cases %") +
+        scale_fill_manual(name = "", values = c("#CCEBC5", "#DECBE4"), guide = "none") +
+        xlab("") +
+        theme_minimal()
+```
+
+We see that in general urban areas have a higher percentage of cases.
+
+### Hospitalisation
+
+We perform the same tables and figures for the other outcome of study, COVID-19 reported hospitalisations.
+
+hospitalisation data is reported week to week. It goes from the week of `r min(dat_cat$data[dat_cat$n_hosp > 0])` to the week of 2023-01-29. Because the study period ends in 2022-07-24, we will consider the data until the week of 2022-07-24.
+
+`r tab_nums("tab_hosp_cum", "Descriptive table of the 2020 population, cumulative hospitalisations and rate in the whole period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_hosp = sum(n_hosp),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_hosp = n_hosp*100/N
+  ) %>% 
+  dplyr::select(N, n_hosp, rate_hosp) %>% 
+  tbl_summary(
+    label = list(N ~ "ABS population (2020)",
+                 n_hosp ~ "ABS cumulative hospitalisations counts",
+                 rate_hosp ~ "ABS cumulative hospitalisations percentage (%)"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+`r tab_nums("tab_hosp", "Descriptive table of weekly hospitalisation incidence rate for all ABS across all the period")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+list("style_number-arg:big.mark" = "") %>%
+  set_gtsummary_theme()
+
+dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(
+    rate_hosp = rate_hosp*100000
+  ) %>% 
+  dplyr::select(rate_hosp) %>% 
+  tbl_summary(
+    label = list(rate_hosp ~ "ABS weekly hospitalisation rate"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"),
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_categorical() ~ c(0,2),
+                  all_continuous() ~ 2
+                  )
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+  wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+  TRUE ~ data_inici
+)
+
+sdat_cat <- dat_cat %>% 
+    rename_all(~ gsub("_hosp", "", .x))  %>% 
+    mutate(
+      xint = case_when(
+        data %in% data_inici ~ data
+      )
+    )
+```
+
+`r fig_nums("plot_hosp", "Plot of the evolution of the weekly hospitalisation rate per 100k habitants across the study period")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  ylab("Weekly hospitalisation rate (x100k hab.)")
+```
+
+The hospitalisation incidence is more comparable between the different waves having similar values in the peaks of their waves. Furthermore, looking at the evolution of the hospitalisations we can see how there exist an extra peak of incidence in the end of the data . So there is in fact a seventh wave of the pandemic but it's not official because since April of 2022 only cases of vulnerable people were reported.
+
+`r fig_nums("map_hosp", "Map of the cumulative hospitalisation percentage across all the study period for each ABS")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_hosp = sum(n_hosp),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_hosp = n_hosp*100/N
+  )
+
+map <- st_as_sf(shapefileT) %>% 
+  left_join(sdat, by = "abs")
+
+cat <- ggplot(map) + 
+       geom_sf(aes(fill = rate_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       # ggtitle("Cumulative hospitalisation percentage") +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1)
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rate_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1, guide = "none") +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+```
+
+`r fig_nums("dot_plot_hosp", "Dot plot of the cumulative hospitalisation incidence percentage across all the study period for each ABS")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+sdat <- dat %>% 
+  group_by(abs) %>% 
+  summarise(
+    n_hosp = sum(n_hosp),
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_hosp = n_hosp*100/N
+  )
+
+ggplot(sdat, aes(x = 1, y = rate_hosp, fill = factor(1))) +
+  geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 0.5) +
+  expand_limits(y = c(0, 4)) +
+  scale_fill_discrete(guide = "none") +
+  scale_x_discrete(name = "", labels = "") +
+  ylab("Cumulative hospitalisation incidence (%)") +
+  theme_minimal()
+```
+
+<!-- `r fig_nums("map_hosp2", "Map of the overall median of weekly hospitalisation rate across all the study period for each ABS")` -->
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE} -->
+
+<!-- sdat <- dat %>%  -->
+<!--   group_by(abs) %>%  -->
+<!--   summarise( -->
+<!--     median = median(rate_hosp)*100000 -->
+<!--   ) -->
+
+<!-- map <- st_as_sf(shapefileT) %>%  -->
+<!--   left_join(sdat, by = "abs") -->
+
+<!-- ggplot(map) +  -->
+<!--        geom_sf(aes(fill = median)) + -->
+<!--        theme_bw() + -->
+<!--        theme( -->
+<!--            axis.ticks = element_blank(), -->
+<!--            axis.text = element_blank() -->
+<!--        ) + -->
+<!--        ggtitle("Median of the weekly hospitalisation rate") + -->
+<!--        scale_fill_distiller(name = "", palette = "YlOrRd", direction = 1) -->
+<!-- ``` -->
+
+`r fig_nums("plot_hosp_rs", "Plot of the weekly hospitalisation rate by each of the health regions along with the median across time")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+#Method for plotting multivariate time series
+# https://www.jstatsoft.org/article/view/v025c01
+dat_plot <- dat_rs %>% 
+  #Filter hospitalisation period
+  filter(data >= ymd("2020-05-03")) %>% 
+  dplyr::select(data, NOMRS, rate_hosp) %>% 
+  pivot_wider(names_from = NOMRS, values_from = rate_hosp) %>% 
+  dplyr::select(-data)
+
+mvtsplot(dat_plot, group = NULL, xtime = unique(dat_rs$data)[unique(dat_rs$data) >= ymd("2020-05-03")], norm = c("global"),
+         levels = 5, smooth.df = NULL, margin = TRUE, 
+         palette = "YlOrRd", rowstat = "median")
+```
+
+<!-- `r fig_nums("plot_hosp_rs2", "Plot the distribution of the weekly hospitalisation rate by each of the health regions")` -->
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE} -->
+<!-- #joy plot or ridgeline plot -->
+<!-- # https://r-charts.com/distribution/ggridges/?utm_content=cmp-true -->
+<!-- dat_plot <- dat_rs %>%  -->
+<!--   dplyr::select(data, NOMRS, rate_hosp) %>%  -->
+<!--   mutate( -->
+<!--     NOMRS = as.factor(NOMRS) -->
+<!--   ) -->
+
+<!-- dat_plot$NOMRS <- factor(dat_plot$NOMRS, labels = c("Pirineu", "BCN", "Tarragona", "Central", "Girona", "Lleida", "Ebre")) -->
+
+<!-- ggplot(dat_plot, aes(x = data, y = rate_hosp, fill = stat(y))) + -->
+<!--   geom_bar(stat = "identity") + -->
+<!--   theme_minimal() + -->
+<!--   facet_grid(NOMRS ~ .) + -->
+<!--   scale_fill_viridis_c(name = "", option = "magma", direction = -1) + -->
+<!--   ylab("Weekly hospitalisation rate (x100k pop)") -->
+<!-- ``` -->
+
+We can see differences in the patterns, similar to what we had for the cases outcome. For example, In Ebre and Tarragona the first wave have almost no impact and in LLeida there is an additional wave corresponding to the same peak that we had for cases.
+
+Let's see the distribution of the hospitalisations by age and sex groups:
+
+`r fig_nums("sex_hosp", "Total cumulative cases percentage in the whole period by sex groups")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ Tpob_hosp <- pob_abs %>% 
+  group_by(any, sexe, edat_hosp) %>% 
+  summarise(NT = sum(N)) %>% 
+  rename(edat = edat_hosp)
+
+plot_hosp <- dat_hosp %>% 
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n)) %>% 
+    left_join(Tpob_hosp %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    group_by(sexe) %>% 
+    summarise(
+      n = sum(n),
+      NT = sum(NT)
+    ) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, Tratio)
+
+ggplot(plot_hosp, aes(x = sexe, y = Tratio * 100, fill = sexe)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(breaks = seq(0, 10, by = 1.25)) +
+  expand_limits(y = 5) +
+  ylab("%") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_x_discrete(name = "", labels = c("Women", "Men"))
+```
+
+For hospitalisations the rate of men is higher than for women.
+
+`r fig_nums("age_sex_hosp", "Total cumulative hospitalisation percentage in the whole period for every age and sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ # Thosp_total <- dat_hosp %>%
+ #    group_by(sexe, edat) %>% 
+ #    summarise(n = sum(n)) %>% 
+ #    left_join(Tpob_hosp %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+ #    mutate(
+ #      Tratio = n/NT
+ #    ) %>% 
+ #    dplyr::select(sexe, edat, Tratio)
+ Thosp_total <- dat_hosp %>%
+    group_by(sexe, edat) %>% 
+    summarise(n = sum(n)) %>% 
+    left_join(Tpob_hosp %>% filter(any == 2020), by = c("sexe", "edat")) %>% 
+    mutate(
+      Tratio = n/NT
+    ) %>% 
+    dplyr::select(sexe, edat, Tratio)
+
+plot_hosp <- Thosp_total %>% 
+  mutate(
+    Tratio = case_when(
+      sexe == "Dona" ~ -Tratio,
+      TRUE ~ Tratio
+    )
+  )
+
+ggplot(plot_hosp, aes(x = Tratio * 100, y = edat, fill = sexe)) +
+  geom_col() +
+  scale_x_continuous(breaks = seq(-100, 100, by = 2.5), labels = abs(seq(-100, 100, by = 2.5))) +
+  expand_limits(x = c(-12.5, 12.5)) +
+  xlab("%") +
+  ylab("Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2", name = "", labels = c("Women", "Men")) 
+```
+
+In terms of the age distribution, we see that the group with more percentage of hospitalisation are the oldest age groups being bigger in men.
+
+`r fig_nums("sex_hosp_ts", "Evolution of the week hospitalisation rate in function of the sex group")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_sexe <- pob_abs %>% 
+  group_by(any, sexe) %>% 
+  summarise(N = sum(N))
+
+plot_hosp <- dat_hosp %>% 
+  group_by(data, sexe) %>% 
+  summarise(n = sum(n)) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_sexe, by = c("any", "sexe")) %>% 
+  mutate(
+    ratio = n*100000/N,
+    sexe = factor(sexe, levels = c("Home", "Dona"))
+  )
+
+
+# ggplot(plot_hosp, aes(x = data, y = ratio, fill = sexe)) +
+#   geom_area(position = "identity", alpha = 0.5) +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   ylab("Week hospitalisation rate (x100k hab.)") +
+#   xlab("") +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1) 
+ggplot(plot_hosp, aes(x = data, y = ratio, color = sexe, group = sexe)) +
+  geom_line(linewidth  = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Week hospitalisation rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2", name = "", labels = c("Men", "Women"), direction = -1)
+```
+
+Approximately, there is always a bigger hospitalisation rate in men than in women across all the period.
+
+`r fig_nums("age_hosp_ts", "Evolution of the week hospitalisation rate in function of the age group (bigger or lower than 70 years)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Tpob_edat <- pob_abs %>% 
+  mutate(
+    edat_70 = case_when(
+      edat_cas %in% c("70-79", "80-89", "90+") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(any, edat_70) %>% 
+  summarise(N = sum(N))
+
+plot_hosp <- dat_hosp %>% 
+  mutate(
+    edat_70 = case_when(
+      edat %in% c("70 a 79", "80 o més") ~ 1,
+      TRUE ~ 0
+    ),
+    edat_70 = factor(edat_70, levels = 0:1, labels = c("< 70 years", ">= 70 years"))
+  ) %>% 
+  group_by(data, edat_70) %>% 
+  summarise(n = sum(n)) %>% 
+  mutate(any = year(data)) %>% 
+  left_join(Tpob_edat, by = c("any", "edat_70")) %>% 
+  mutate(
+    ratio = n*100000/N
+  )
+
+ggplot(plot_hosp, aes(x = data, y = ratio, color = edat_70, group = edat_70)) +
+  geom_line(linewidth  = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  ylab("Week hospitalisation rate (x100k hab.)") +
+  xlab("") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Pastel1", name = "", direction = -1)
+```
+
+We see that in all the period, the hospitalisation rate is a lot much bigger for the group of >= 70 years than the group of < 70 years. 
+
+`r fig_nums("hosp_urban", "Boxplot of cumulated hospitalisations in function of urban/rural areas")`
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+
+sdat <- dat %>% 
+  group_by(urban, abs) %>% 
+  summarise(
+    n_hosp = sum(n_hosp),
+    #Mean population
+    N = mean(N)
+  ) %>% 
+  mutate(
+    rate_hosp = n_hosp*100/N
+  )
+
+ggplot(sdat, aes(x = urban, y = rate_hosp, fill = urban)) + 
+        geom_boxplot(outlier.shape = NA, na.rm = TRUE) + 
+        geom_point(shape=21,position=position_jitterdodge()) +
+        ylab("Cumulative hospitalisation %") +
+        scale_fill_manual(name = "", values = c("#CCEBC5", "#DECBE4"), guide = "none") +
+        xlab("") +
+        theme_minimal()
+```
+
+We see that in general urban areas have a higher percentage of hospitalisations.
+
+# Spatial models
+
+We will use Bayesian Hierarchical models for the Standardized Incidence Ratio (SIR) of each outcome that is calculated for every ABS as the observed counts in the area over the expected counts that it would have if the area had the same behaviour than the total of Catalonia according to its age and sex distribution. When modeling the SIR we will obtain the Relative Risk (RR) of the risk of the area over the total territory of Catalonia.
+
+The first model that we propose is to model the SIR for each date independently only taking in account the spatial dimension. Let $\theta_i$ be the observed SIR in the area $i$, the most popular spatial model is the Besag York Mollié (BYM):
+
+$$
+\begin{equation}
+\begin{split}
+Y_i \mid \theta_i & \sim Poisson(E_i \theta_i) \\ 
+\log{\theta_i} & = \alpha + S_i + U_i
+\end{split}
+\end{equation}
+$$
+where $S_i$ is the spatial structured effect and the $U_i$ is the spatial unstructured effect. The spatial structured effect $S_i$ assumes a dependency structure of each area with its neighbours. An alternative formulation is the BYM2 in which these two types of spatial random effect are combined in a weighted average:
+
+$$b = \sigma_b(\sqrt{\phi}S + \sqrt{1-\phi}U)$$
+In this alternative formulation the two hyperparameters of the model will be the mixing parameter $\phi$ that represents the role of the structured effect over the unstructured one, and the parameter $\sigma_b$ that represents the pure spatial standard deviation. This formulation is recommended over the BYM one, as the performance is similar and these hyperparameters are interpretable. 
+
+We have modelled a spatial model for every week. In this section we will compare the performance of the estimated models in function of the model formulation used (BYM vs BYM2) and how the estimated hyperparameters of the BYM2 models change across time.
+
+## DIC & WAIC
+
+To evaluate the performance of these bayesian models the most popular model selection criteria is the DIC and WAIC that are measures of the likelihood of the models penalizing for the model complexity, to take in account overfitting. As less is the value of the DIC/WAIC better is the performance. 
+
+We will compare the time series of DIC and WAIC values between using a BYM or a BYM2 model. We don't expect to get optimal DIC and WAIC with BYM2, but similar values, as shown by literature. 
+
+`r tab_nums("dic_waic", "Description of estimated DIC and WAIC for BYM and BYM2 spatial models")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+theme_gtsummary_journal(journal = "jama")
+list("style_number-arg:big.mark" = "") %>%
+    set_gtsummary_theme()
+
+sp_dic_waic %>% 
+  mutate(
+    model = toupper(model)
+  ) %>% 
+  pivot_longer(cols = c(dic, waic), names_to = "type", values_to = "val") %>% 
+  pivot_wider(names_from = outcomes, values_from = val) %>% 
+  dplyr::select(
+    model, type, cas, hosp 
+  ) %>% 
+  tbl_strata(
+    strata = model,
+    ~.x %>% 
+      tbl_summary(
+        by = type,
+        label = list(
+          cas ~ "Cases",
+          hosp ~ "hospitalisation"
+        ),
+        type = list(all_continuous() ~ "continuous2"),
+        statistic = list(
+          all_continuous2() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})")
+        ),
+        digits = list(all_continuous2() ~ 2),
+        missing = "no"
+      ) %>% 
+      modify_header(label = "",
+                  stat_1 = "**DIC**",
+                  stat_2 = "**WAIC**") 
+  ) %>% 
+  as_kable_extra() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Indeed, we have similar distributions of DIC & WAIC for each type of model setting. Let's plot the evolution of the DIC/WAIC for both models in function of the time:
+
+`r fig_nums("dic", "Evolution of DIC for BYM and BYM2 spatial models on the SIR of covid-19 cases")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+cas_dic <- sp_dic_waic %>% 
+  filter(outcomes == "cas") %>% 
+  dplyr::select(data, model, dic)
+
+ggplot(data = cas_dic, aes(x = data, y = dic, color = model)) +
+  geom_point() +
+  geom_line(aes(group = model)) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y - %m") +
+  labs(x = "Date", y = "DIC") +
+  scale_color_discrete(name = "Model") +
+  theme_minimal()
+
+```
+
+`r fig_nums("waic", "Evolution of WAIC for BYM and BYM2 spatial models on the SIR of covid-19 cases")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+cas_waic <- sp_dic_waic %>% 
+  filter(outcomes == "cas") %>% 
+  dplyr::select(data, model, waic)
+
+ggplot(data = cas_waic, aes(x = data, y = waic, color = model)) +
+  geom_point() +
+  geom_line(aes(group = model)) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y - %m") +
+  labs(x = "Date", y = "WAIC") +
+  scale_color_discrete(name = "Model") +
+  theme_minimal()
+```
+
+Points and lines overlap so there is no difference in the estimated DIC and WAIC between both models.
+
+## RR
+
+We calculate the Standardized Mean Difference (SMD) from Cohen's d between the estimates of RR of the two different models for each week. We expect to get small differences therefore we can say the estimated results from the two different approaches are similar. Commonly a SMD value less than 0.2 is considered that there doesn't exist imbalances between the two compared samples.
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+dat_smd <- tibble(expand.grid(data = unique(res_sp$data), outcomes = c("cas", "hosp", "vac"), var = c("rr"))) %>%
+  mutate_if(is.factor, as.character) %>% 
+  mutate(
+    smd = pmap_dbl(list(data, outcomes, var), function(x, y, z) {
+      df <- res_sp %>%
+        filter(data == x, outcomes == y) %>% 
+        rename("z" = z)
+      
+      bym <- df %>% 
+        filter(model == "bym") %>% 
+        pull(z)
+      bym2 <- df %>% 
+        filter(model == "bym2") %>% 
+        pull(z)
+      if(!identical(bym, bym2)) {
+        abs(cohens_d(bym, bym2, paired = TRUE)$Cohens_d)
+      } else if(length(bym) == 0) {
+        NA 
+        }else {
+        0
+      }
+    }),
+    var = "RR"
+  )
+    
+```
+
+### Cases
+
+`r fig_nums("plot_rr_cas", "Plot of the evolution of the SMD calculated between the RR and estimated with both models of the outcome case, along with the evolution of the case rate in the total of Catalonia")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+sdat_smd <- dat_smd %>% 
+  filter(outcomes == "cas")
+
+#Start date of each wave
+# data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_cas", "", .x))  
+  # mutate(
+  #   xint = case_when(
+  #     data %in% data_inici ~ data
+  #   )
+  # )
+    
+# ggplot(data=evodat,aes(x = month, fill = year_cat))+
+#     geom_bar(aes(y = int), stat="identity", position = position_dodge(), alpha = 0.6) + 
+#     #Hem de multiplicar per 20 i després en el axis dividirem per 20 per escalar-ho amb el primer axis:
+#     geom_point(aes(y = perc_int*20, color =year_cat)) +
+#     geom_line(aes(y = perc_int*20, group = year_cat, color = year_cat)) +
+#     scale_y_continuous(name = "Nº Intervenciones", sec.axis = sec_axis(~./20, name="% Intervenciones", breaks = seq(0,60,10))) + 
+#     scale_color_discrete(name = "Año") + 
+#     scale_fill_discrete(name = "Año") +
+#     xlab("Mes")
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sdat_smd, aes(x = data, y = smd*5000, group = var, color = var), alpha = 0.5) +
+  geom_line(data = sdat_smd, aes(x = data, y = smd*5000, group = var, color = var), alpha = 0.5) +
+  scale_color_manual(name = "", values = c("#00BFC4")) +
+  geom_hline(yintercept = 0.1*5000, color = "black", linetype = "dashed", alpha = 0.5) +
+  geom_hline(yintercept = 0.2*5000, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./5000, name = "SMD"))
+
+# ggplot(data = dat_smd, aes(x = data, y = smd, group = outcomes, color = outcomes)) +
+#   facet_grid(. ~ var) +
+#   geom_line() +
+#   geom_point() +
+#   geom_hline(yintercept = 0.1, color = "black", size = 0.1) +
+#   geom_hline(yintercept = 0.2, color = "black", size = 0.1) + 
+#   scale_color_discrete(name = "", labels = c("Cases", "hospitalisation", "Vaccination"))
+```
+
+In few dates there are some differences that exceed the 0.2 threshold. We can calculate the actual differences and describe them in tables. Note that as comparatives are paired the effect is equivalent to looking the one-sample effect size on the differences.
+
+`r tab_nums("rr_bym_bym2", "RR estimated absolute differences between BYM and BYM2 models")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+res_sp %>% 
+  filter(outcomes == "cas") %>% 
+  group_by(data, abs) %>% 
+  summarise(
+    rr = abs(diff(rr))
+  ) %>% 
+  ungroup() %>% 
+  dplyr::select(rr) %>% 
+  tbl_summary(
+    label = list(rr ~ "RR differences"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous2() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})")),
+    digits = list(all_continuous2() ~ 4)
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+### Hospitalisation
+
+`r fig_nums("plot_rr_hosp", "Plot of the evolution of the SMD calculated between the RR estimated with both models of the outcome hospitalisation, along with the evolution of the hospitalisation rate in the total of Catalonia")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+sdat_smd <- dat_smd %>% 
+  filter(outcomes == "hosp")
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_hosp", "", .x))  
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sdat_smd, aes(x = data, y = smd*50, group = var, color = var), alpha = 0.5) +
+  geom_line(data = sdat_smd, aes(x = data, y = smd*50, group = var, color = var), alpha = 0.5) +
+  scale_color_manual(name = "", values = c("#00BFC4")) +
+  geom_hline(yintercept = 0.1*50, color = "black", linetype = "dashed", alpha = 0.5) +
+  geom_hline(yintercept = 0.2*50, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./50, name = "SMD"))
+
+```
+
+For the estimated RR, there is almost no single data point that has a high SMD over 0.2. 
+
+`r tab_nums("rr_bym_bym2_2", "Mean and SD of the absolute differences of RR estimated between BYM and BYM2 models for all dates and all areas")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+theme_gtsummary_journal(journal = "jama")
+
+res_sp %>% 
+  filter(outcomes == "hosp") %>% 
+  group_by(data, abs) %>% 
+  summarise(
+    rr = abs(diff(rr))
+  ) %>% 
+  ungroup() %>% 
+  dplyr::select(rr) %>% 
+  tbl_summary(
+    label = list(rr ~ "RR differences"),
+    type = list(all_continuous() ~ "continuous2"),
+    statistic = list(all_continuous2() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})")),
+    digits = list(all_continuous2() ~ 4)
+  ) %>% 
+  modify_header(label = "") %>% 
+  as_kable_extra() %>% 
+  kable_styling(bootstrap_options = c("striped","hover"))
+```
+
+## BYM2 hyperparameters
+
+As we have seen, DIC and WAIC values are similar between the two models and also the estimated relative risk in general have few differences. Therefore, we would choose BYM2 as it performs similar as BYM and furthermore the parameters are interpretable.
+
+### $\phi$ (spatially structured correlation)
+
+The mixing parameter $\phi$ represents the proportion of the marginal variance explained by the structured spatial effect over the non-structured one. Let's see how it changes over time, for each outcome:
+
+#### Cases
+
+`r fig_nums("evo_phi_cas", "Evolution of the estimated values of the Phi hyperparameter of the BYM2 model for the outcome cases, along with the evolution of the case rate")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+sbym2_hp <- bym2_hp %>% 
+  filter(outcomes == "cas")
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_cas", "", .x))  
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sbym2_hp, aes(x = data, y = Phi*4000), alpha = 0.5, color = "#00BFC4") +
+  geom_line(data = sbym2_hp, aes(x = data, y = Phi*4000, group = 1), alpha = 0.5, color = "#00BFC4") +
+  geom_hline(yintercept = 0.5*4000, linetype = "dashed") +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./4000, name = "Phi", breaks = c(0, 0.25, 0.75, 1)))
+```
+
+It seems that for the incidence peaks the estimated $\phi$ also has a pick. This could be an expected behavior as having more infected individuals in one area it could spread to the neighbourhood areas more easily, so the structure component of the spatial effect could have a bigger influence. Also, it's related on having less variance in high incidence periods so areas are very similar and the number of isolated hot spots are lower. Note that  between the first and second wave we also observe a peak of structural effect that it can be related to the Lleida outbreak. 
+
+In general, the structured effect accounts for more of the variability than the structured effect as $\phi$ values are higher than 0.5, although the prior distribution assumed the opposited as it was a conservative choice.
+
+#### Hospitalisation
+
+`r fig_nums("evo_phi_hosp", "Evolution of the estimated values of the Phi hyperparameter of the BYM2 model for the outcome hospitalisation, along with the evolution of the hospitalisation rate")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sbym2_hp <- bym2_hp %>% 
+  filter(outcomes == "hosp")
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_hosp", "", .x))  
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sbym2_hp, aes(x = data, y = Phi*50), alpha = 0.5, color = "#00BFC4") +
+  geom_line(data = sbym2_hp, aes(x = data, y = Phi*50, group = 1), alpha = 0.5, color = "#00BFC4") +
+  geom_hline(yintercept = 0.5*50, linetype = "dashed") +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./50, name = "Phi", breaks = c(0, 0.25, 0.5, 0.75, 1)))
+
+```
+
+For the hospitalisation model we could say the same. In this case, also the values of $\phi$ are higher than 0.5 in almost all of the period, so the structured effect accounts for more variance than the unstructured one.
+
+### SD ($\sigma_b$)
+
+The parameter $\sigma_b$ represents the marginal spatial standard deviation and controls the pure variability explained by a spatial effect. Let's see how it changes over time for each outcome:
+
+#### Cases
+
+`r fig_nums("evo_prec_cas", "Evolution of the estimated values of the standard deviation given by the precision hyperparameter of the BYM2 model for the outcome cases, along with the evolution of the case rate")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+sbym2_hp <- bym2_hp %>% 
+  filter(outcomes == "cas")
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_cas", "", .x))  
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sbym2_hp, aes(x = data, y = SD*3200), alpha = 0.5, color = "#00BFC4") +
+  geom_line(data = sbym2_hp, aes(x = data, y = SD*3200, group = 1), alpha = 0.5, color = "#00BFC4") +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./3200, name = "SD"))
+
+```
+
+When the incidence is higher the spatial variance is lower as most of the areas might have similar values, meanwhile when the incidence is lower there can be some areas that have higher cases and thus there is more variability.
+
+#### Hospitalisation
+
+`r fig_nums("evo_prec_hosp", "Evolution of the estimated values of the standard deviation given by the precision hyperparameter of the BYM2 model for the outcome hospitalisation, along with the evolution of the hospitalisation rate")`
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+sbym2_hp <- bym2_hp %>% 
+  filter(outcomes == "hosp")
+
+sdat_cat <- dat_cat %>% 
+  rename_all(~ gsub("_hosp", "", .x))  
+
+ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+  geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  # geom_vline(aes(xintercept = xint), linetype = "dashed") +
+  #Second axis:
+  geom_point(data = sbym2_hp, aes(x = data, y = SD*40), alpha = 0.5, color = "#00BFC4") +
+  geom_line(data = sbym2_hp, aes(x = data, y = SD*40, group = 1), alpha = 0.5, color = "#00BFC4") +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./40, name = "SD"))
+
+```
+
+For the hospitalisation outcome we can see that in the beginning the spatial variance follows the same pattern as for cases (in hospitalisation picks the variance decreases). In the middle of the study period it seems to happen the contrary (in hospitalisation picks there must be some important individual areas and when the hospitalisation is low all areas must have almost no events). Finally, in the end of the hospitalisation it stabilizes over 0.3. 
+
+# Spatio-temporal models
+
+Let's now consider also the temporal dimension. Thus, now we won't estimate different indpendent spatial models for each week but we will try to model the temporal correlation of the outcomes. The basis of the model will be the spatial model as before but now we will add a temporal effect and also a spatio-temporal effect:
+
+$$\log(\theta_{ij}) = \alpha + S_i + U_i + \gamma_j + w_j + \delta_{ij}$$
+
+where $\gamma_j$ is the temporal structured effect, $w_j$ is the temporal unstructured effect and $\delta_ij$ is the space-time interaction. Commonly, four different type of interaction effects are considering following the Knorr-Held specification. We will try the four types of interactions effects and see which one fits better to our data. 
+
+Previous to that, we have to decide what the base model will be. For example, we will use BYM or BYM2 specification for the spatial structure? Do we have to include the temporal unstructured effect or we can exclude it as in practice diseases have only a structured temporal effect? For the structured temporal effect, do we have to estimate a RW1 or a RW2 model? We will consider the base model as the model with a type I interaction (the most simple model).
+
+ 
+## Base spatio-temporal model
+
+`r tab_nums("dic_waic_st_base", "Description of estimated DIC and WAIC for different specifications of a spatio-temporal base model")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- st_dic_waic_base %>% 
+  pivot_wider(names_from = effect, values_from = c(dic_cas:waic_hosp)) %>% 
+  dplyr::select(base, dic_cas_sir2, waic_cas_sir2, dic_hosp_sir2, waic_hosp_sir2, dic_cas_sir, waic_cas_sir, dic_hosp_sir, waic_hosp_sir)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 4))
+
+kable(taula, align = "c") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  add_header_above(c(" " = 1, "Cases" = 2, "hospitalisation" = 2, "Cases" = 2, "hospitalisation" = 2)) %>%
+  add_header_above(c(" " = 1, "SIR (Whole period)" = 4, "SIR (Weekly)" = 4)) %>%
+  row_spec(2, extra_css = "border-bottom: 1px solid") %>% 
+  row_spec(4, extra_css = "border-bottom: 1px solid") %>% 
+  row_spec(6, extra_css = "border-bottom: 1px solid") %>% 
+  row_spec(1, bold = TRUE) %>% 
+  row_spec(3, bold = TRUE) %>% 
+  row_spec(5, bold = TRUE)
+```
+
+- For the SIR calculated with expected values from the whole period, it seems that BYM2 performs better as it have less values for DIC and WAIC. For the SIR calculated with weekly expected values, BYM and BYM2 have a similar performance. Thus, we will select BYM2 as it has a similar or better performance and the hyperparameters are further interpretable. 
+
+- In both different types of models, those without the temporal unstructured effect perform better. Therefore, we will omit this type of effect.
+
+- For the SIR (Whole period), the RW1 performs a little bit worse in cases and similar in hospitalisations, meanwhile for the SIR (weekly) it performs similar in cases and a little bit worse in hospitalisations. For parsimonous reasons, we will select RW1 models as the performance is similar overall and it is a more simple model.
+
+Therefore, the selected base spatio-temporal model will be the following:
+
+
+$$log(\theta_{ij}) = \alpha + b_i + \gamma_j + \delta_{ij}$$
+where $b = \frac{1}{\sqrt{\tau_b}}(\sqrt{1-\phi}v_* + \sqrt{\phi}u_*)$ and $\delta_ij$ is the spatio-temporal interaction effect that we have yet to select.
+
+## Interactions effects comparison
+
+Let's estimate the different types of interaction effect $\delta_{ij}$ and calculate the DIC & WAIC to choose the one that fits best our data.
+
+`r tab_nums("dic_waic_st", "Description of estimated DIC and WAIC values of the different spatiotemporal base models in function of the structure of the interaction effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- 
+  rbind(
+    st_dic_waic %>% 
+      mutate(
+        interaction = case_when(
+          interaction == "no" ~ "No",
+          TRUE ~ interaction
+        ),
+        model = "SIR"
+      ),
+    st_dic_waic_sir2 %>% 
+      mutate(
+        interaction = case_when(
+          interaction == "no" ~ "No",
+          TRUE ~ interaction
+        ),
+        model = "SIR2"
+      )
+  ) %>% 
+  pivot_wider(
+    names_from = model,
+    values_from = c(dic_cas:waic_hosp)
+  ) %>% 
+  dplyr::select(interaction, dic_cas_SIR2, waic_cas_SIR2, dic_hosp_SIR2, waic_hosp_SIR2, dic_cas_SIR, waic_cas_SIR, dic_hosp_SIR, waic_hosp_SIR)
+
+names(taula) <- c("Interaction", rep(rep(c("DIC", "WAIC"), 2), 2))
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  add_header_above(c(" " = 1, "Cases" = 2, "hospitalisation" = 2, "Cases" = 2, "hospitalisation" = 2)) %>% 
+  add_header_above(c(" " = 1, "SIR2" = 4, "SIR" = 4)) %>% 
+  row_spec(3, bold = TRUE)
+```
+
+
+The best model is the type II interaction, as it performs the best in the cases model and similar in the hospitalization one than IV, but IV is much more complex. This type of interaction effect assumes that each area follows a random walk of order 1 across time that is independent from all the other areas.
+
+## Type II interaction
+
+```{r echo=FALSE}
+#Let's calculate the marginal effects following the code in
+# https://github.com/spatialstatisticsupna/Comparing-R-INLA-and-NIMBLE/blob/main/R/tables_figures_paper.R
+# https://github.com/spatialstatisticsupna/Identifiability_Constraints_article/blob/main/R/Results.R
+
+#More ideas on how to interpret the results in
+# https://link.springer.com/article/10.1007/s00477-021-02003-2
+```
+
+Let's show the results of the selected spatio-temporal model first for the model of SIR taking in account the expected outcome in the whole period and then repeating the analysi for the SIR taking in account the expected outcome by each week.
+
+### SIR whole period 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Modelling Spatial and Spatial-Temporal Data page 171 (the last phrase)
+#Get smooth rate
+sdat_sae <- ndat_sae_II %>%
+  filter(effect == "sir2")
+```
+
+<!-- We can also model directly the incidence if we change the offset of the model to take in account the total number of population at-risk (all the population) and not the expected one. Now, the exponential of the coefficients of the model will be interpeted as incidence rate ratios (IRR, ratio between incidence rates) as we would have in a typical poisson regression instead of relative risks (ratio between risks) as we had before. -->
+
+`r tab_nums("phi_sd_spatial_2", "Estimated values of the SD and Phi hyperparameter of the model for each outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  mutate(
+    hp = map(res, ~tibble(
+      "Intercept" = str_glue("{round(exp(summary(.x)$fixed[1]), 2)} ({round(exp(summary(.x)$fixed[3]), 2)}, {round(exp(summary(.x)$fixed[5]), 2)})"),
+      "SD (idarea)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[1]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[1]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[1]), 2)})"),
+      "Phi (idarea)" = str_glue("{round(.x$summary.hyperpar$mean[2], 2)} ({round(.x$summary.hyperpar$`0.025quant`[2], 2)}, {round(.x$summary.hyperpar$`0.975quant`[2], 2)})"),
+      "SD (idtime)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[3]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[3]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[3]), 2)})"),
+      "SD (idareatime)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[4]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[4]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[4]), 2)})")
+    ))
+  ) %>% 
+  dplyr::select(outcomes, hp) %>% 
+  unnest(hp)
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The structured spatial effect has more importance in both outcomes, as before. 
+
+`r tab_nums("var_exp_2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://link.springer.com/article/10.1007/s00477-021-02003-2
+#The contribution of each random efect on the overall variation of relative risks can be quantified by the weight of 1/prec_effect on the sum of all 1/prec_effect. The thing is that the expected value of the product/divison is not the product/divison of the expected values, so we have to sample from the joint distribution of the hyperparameters using inla.hyperpar.sample to have posterior mean estimates of the percentage of variation
+taula <- sdat_sae %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  mutate(
+    outcomes = factor(outcomes, levels = c("cas", "hosp"), labels = c("Cases", "hospitalisation"))
+  ) %>% 
+  dplyr::select(outcomes, contains("Precision"))
+
+names(taula) <- c("Outcomes", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The cases variance is explained mostly for the temporal variance as expected because cases are a lot different across waves. For the hospitalisation outcome, the variance is explained mostly by the spatial variance. Thus, we can think that there may exist some differences in the ABS characteristics that might explain this spatial variance.
+
+Spatial residual relative risk can be calculated from the estimated marginal spatial effect: $RR_{\text{Spatial}} = exp(b_i)$. This RR models the risk of each area compared to the overall territory for all the period, taking in account the age and sex distribution of the area.
+
+`r fig_nums("spatial_rr_2", "Map of the posterior mean estimates of the residual spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+## Posterior mean estimates of the spatial pattern 
+#summary.random gives the summary of the marginals of each effect. In idarea we have the spatial effect that in the case of BYM2 corresponds to two times the number of idarea where the first one is the spatial overall effect and the second one is only the structured effect (https://www.paulamoraga.com/book-geospatial/sec-arealdatatheory.html)
+
+#Toronto article uses it (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9172088/)
+
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+Because the nature of the model is Bayesian we can calculate the probability that the posterior distribution of the estimated relative risks exceeds 1, that is, the probability that the marginal spatial risk of an area is greater than the rest of the areas. We will define a hot spot as an area with a probability between 0.8 and 1, whereas a cold spot will be an area with a probability lower than 0.2.
+
+`r fig_nums("spatial_p2", "Map of the posterior probability that the relative risk of the spatial pattern effect exceeds the threshold 1")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#We can also plot the posterior probability that the spatial effect exceeds the threshold 0
+# https://martablangiardo.github.io/Practical9/#5_Spatio-temporal_model_(type_I_interaction)
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("(0, 0.2]", "0.2-0.8", "[0.8, 1]")))
+
+map$p_cas <- p_spatial %>% filter(outcomes == "cas") %>% pull(p_cat)
+map$p_hosp <- p_spatial %>% filter(outcomes == "hosp") %>% pull(p_cat)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_cas)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_cas)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_hosp)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_hosp)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+```
+
+Let’s see which are the areas with higher spatial RR, to see which are could be hot/cold spots for all the overall period.
+
+`r tab_nums("rr_spatial_spots2", "Description table of the RR and p-value of the spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) 
+
+taula <- shapefileT@data %>% 
+  mutate(
+    rr_cas = rr_spatial %>% filter(outcomes == "cas") %>% pull(rr),
+    p_cas = p_spatial %>% filter(outcomes == "cas") %>% pull(p),
+    rr_hosp = rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr),
+    p_hosp = p_spatial %>% filter(outcomes == "hosp") %>% pull(p),
+  ) %>% 
+  mutate_at(vars(contains('rr_')), ~round(.x, 3)) %>% 
+  mutate_at(vars(contains('p_')), ~round(.x, 3))
+
+staula <- taula %>% 
+  rename(rr = rr_cas, p = p_cas) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (Cases)", class = 'cell-border stripe')
+
+staula <- taula %>% 
+  rename(rr = rr_hosp, p = p_hosp) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (hospitalisations)", class = 'cell-border stripe')
+```
+
+We can also take in account only the structured spatial pattern and calculate the spatial structured residual RRs: $RR_{\text{Spatial Structured}} = exp(u_*)$.
+
+`r fig_nums("spatial_rr_struc_2", "Map of the posterior mean estimates of the spatial pattern effect (only the structured one)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea) + nrow(map)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+We can take in account the temporal residual relative risk: $RR_{\text{Temporal}} = exp(\gamma_t)$. 
+
+`r fig_nums("temp_rr_2", "Plot of the posterior mean estimates of the temporal trends of each week")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Temporal trends
+temp <- sdat_sae %>% 
+  mutate(
+    effect = map(res, ~.x$summary.random$idtime)
+  ) %>% 
+  dplyr::select(outcomes, effect) %>% 
+  unnest(effect) %>% 
+  dplyr::select(outcomes, mean, "0.025quant", "0.975quant") %>% 
+  mutate_if(is.numeric, ~exp(.x))
+
+stemp <- temp %>% 
+  filter(outcomes == "cas")
+
+plot_temp <- tibble(data = unique(dat$data), effect = stemp$mean, effect_lci = stemp$`0.025quant`, effect_uci = stemp$`0.975quant`)
+
+p1 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = effect*150), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = effect*150), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*150, ymax = effect_uci*150), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*150, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./150, name = "Temporal IRR"))
+
+stemp <- temp %>%
+  filter(outcomes == "hosp")
+
+plot_temp <- tibble(data = unique(dat$data)[unique(dat$data) >= ymd("2020-05-03")], effect = stemp$mean, effect_lci = stemp$`0.025quant`, effect_uci = stemp$`0.975quant`)
+
+p2 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() +
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = effect*14), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = effect*14), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*14, ymax = effect_uci*14), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*14, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./14, name = "Temporal IRR"))
+
+p1/p2
+
+#The spatio-temporal trend cannot be represented as we have too many areas and too many weeks...
+```
+
+The temporal relative risk follows the time trend of the outcomes in the total territory, so it fits good the temporal trend in the whole territory.
+
+We can take in account the spatio-temporal residual relative risk given by the interaction: $RR_{\text{Spatio-Temporal}} = exp(\delta_{it})$. This effect models how the areas deviate from the overall time trend so it is a good measure to determine outbreaks of the outcomes in the areas. We plot the evolution of this RR for each health region coloring only the ABS in that particular region to see how they deviate from the estimated values of the other areas in different regions coloured in grey. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+    wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+    TRUE ~ data_inici
+)
+
+dat_add <- dat %>% 
+  mutate(ID = row_number()) %>% 
+  dplyr::select(ID, data, idarea, abs)
+
+rr_sp_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idareatime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, ID, rr = mean) %>% 
+  mutate(
+    rr = exp(rr)
+  ) %>% 
+  full_join(dat_add, by = "ID")
+
+abs_rs <- shapefileT@data %>%
+  distinct(abs, NOMRS)
+
+rr_sp_temp <- rr_sp_temp %>% 
+  left_join(abs_rs, by = "abs")
+
+ndat_plot <- tibble(expand.grid(nomrs = rev(sort(unique(rr_sp_temp$NOMRS))), outcomes = c("cas", "hosp"))) %>% 
+  mutate(
+    id = row_number(),
+    df = pmap(list(nomrs, outcomes, id), function(x, y, z) {
+      rr_sp_temp %>% 
+        filter(outcomes == y) %>% 
+        mutate(
+          color = case_when(
+            NOMRS %in% x ~ z,
+            TRUE ~  0
+          ),
+          alpha = case_when(
+            NOMRS %in% x ~ 1,
+            TRUE ~ 0
+          )
+        ) %>% 
+        dplyr::select(-outcomes, -NOMRS) %>% 
+        mutate(
+          xint = case_when(
+            data %in% data_inici ~ data
+          ),
+          idarea = idarea + 373*z
+        )
+      
+    })
+  )
+```
+
+`r fig_nums("sptemp_rr2_cas", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "cas") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+```
+
+Looking at this trends we can see for each health region when its ABS had an outbreak of cases. For example, we can see that in Terres de l’Ebre just before the sixth wave (when in Catalonia there were almost no cases) there was an outbreak in some ABS in that region. In Lleida we can see the strongest outbreak of all the different regions belonging to the outbreak of the virus in Segrià. Also just in the beginning of the sixth wave there is another outbreak of cases in some ABS of Lleida. In Girona there is no ABS that had a clear outbreak of cases in any period, so we can say that it didn’t deviate much from the time trend of the virus in the total of Catalonia. In Catalunya Central there is an outbreak of cases before the sixth wave, a bit before than the outbreak in Lleida. In Camp de Tarragona also before the sixth wave has an outbreak and just in the beginning of the second wave another. In Barcelona there is an outbreak just before the beginning of the second wave related to an outbreak of the virus specifically in areas in L’Hospitalet, and also there is an outbreak in the second to third wave. Finally, in Alt Pirineu i Aran there is an outbreak of cases just before the third wave in some areas and in the beginning of the third wave in others.
+
+`r fig_nums("sptemp_rr2_hosp", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "hosp") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+```
+
+For the hospitalizations we have some different patterns indicating different outbreaks, for each region except in Lleida that it corresponds to the same outbreak in Segrià between the first and second wave. For example, Girona in terms of hospitalizations have a lot of outbreaks whereas for cases it behaved like the general population. The most pronounced outbreaks of hospitalizations now happen of course in Lleida, in Girona in the beginning of the first wave and in some other time points to a lesser extent, in some areas of Catalunya Central and Tarragona just before the sixth wave, in Barcelona in the first wave and in Alt Pirineu i Aran in the beginning of the second wave and in the end of the third.
+
+### SIR by week
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Get smooth SIR
+sdat_sae <- ndat_sae_II %>% 
+  filter(effect == "sir")
+```
+
+`r tab_nums("phi_sd_spatial", "Estimated values of the SD and Phi hyperparameter of the model for each outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  mutate(
+    hp = map(res, ~tibble(
+      "Intercept" = str_glue("{round(exp(summary(.x)$fixed[1]), 2)} ({round(exp(summary(.x)$fixed[3]), 2)}, {round(exp(summary(.x)$fixed[5]), 2)})"),
+      "SD (idarea)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[1]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[1]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[1]), 2)})"),
+      "Phi (idarea)" = str_glue("{round(.x$summary.hyperpar$mean[2], 2)} ({round(.x$summary.hyperpar$`0.025quant`[2], 2)}, {round(.x$summary.hyperpar$`0.975quant`[2], 2)})"),
+      "SD (idtime)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[3]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[3]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[3]), 2)})"),
+      "SD (idareatime)" = str_glue("{round(1/sqrt(.x$summary.hyperpar$mean[4]), 2)} ({round(1/sqrt(.x$summary.hyperpar$`0.975quant`[4]), 2)}, {round(1/sqrt(.x$summary.hyperpar$`0.025quant`[4]), 2)})")
+    ))
+  ) %>% 
+  dplyr::select(outcomes, hp) %>% 
+  unnest(hp)
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The spatial structured predominates over the unstructured one for both outcomes, as the values of $\phi$ are very high.
+
+`r tab_nums("var_exp", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://link.springer.com/article/10.1007/s00477-021-02003-2
+#The contribution of each random efect on the overall variation of relative risks can be quantified by the weight of 1/prec_effect on the sum of all 1/prec_effect. The thing is that the expected value of the product/divison is not the product/divison of the expected values, so we have to sample from the joint distribution of the hyperparameters using inla.hyperpar.sample to have posterior mean estimates of the percentage of variation
+taula <- sdat_sae %>% 
+  mutate(
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                       ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+                )
+  ) %>% 
+  unnest(var) %>% 
+  mutate(
+    outcomes = factor(outcomes, levels = c("cas", "hosp"), labels = c("Cases", "hospitalisation"))
+  ) %>% 
+  dplyr::select(outcomes, contains("Precision"))
+
+names(taula) <- c("Outcomes", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+For the cases outcome the spatio-temporal variance expalins most of the variability meanwhile the spatial variance explains most of the variability for hospitalisation. In both outcomes, the temporal structure has almost no role as expected because the overall effect in a particular week it is intrinsically included in the calculation of the expected cases of that week that we include in the model.
+
+`r fig_nums("spatial_rr", "Map of the posterior mean estimates of the residual spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+## Posterior mean estimates of the spatial pattern 
+#summary.random gives the summary of the marginals of each effect. In idarea we have the spatial effect that in the case of BYM2 corresponds to two times the number of idarea where the first one is the spatial overall effect and the second one is only the structured effect (https://www.paulamoraga.com/book-geospatial/sec-arealdatatheory.html)
+
+#Toronto article uses it (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9172088/)
+
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+The map for the spatial effect is very similar than before.
+
+`r fig_nums("spatial_p", "Map of the posterior probability that the relative risk of the spatial pattern effect exceeds the threshold 1")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#We can also plot the posterior probability that the spatial effect exceeds the threshold 0
+# https://martablangiardo.github.io/Practical9/#5_Spatio-temporal_model_(type_I_interaction)
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("(0, 0.2]", "0.2-0.8", "[0.8, 1]")))
+
+map$p_cas <- p_spatial %>% filter(outcomes == "cas") %>% pull(p_cat)
+map$p_hosp <- p_spatial %>% filter(outcomes == "hosp") %>% pull(p_cat)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_cas)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_cas)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_hosp)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_hosp)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+```
+
+Hot/cold spots for the cases are similar than those for hospitalisations.
+
+Let's see which are the areas with higher spatial RR, to see which are could be hot/cold spots for all the overall period.
+
+`r tab_nums("rr_spatial_spots", "Description table of the RR and p-value of the spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) 
+
+taula <- shapefileT@data %>% 
+  mutate(
+    rr_cas = rr_spatial %>% filter(outcomes == "cas") %>% pull(rr),
+    p_cas = p_spatial %>% filter(outcomes == "cas") %>% pull(p),
+    rr_hosp = rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr),
+    p_hosp = p_spatial %>% filter(outcomes == "hosp") %>% pull(p),
+  ) %>% 
+  mutate_at(vars(contains('rr_')), ~round(.x, 3)) %>% 
+  mutate_at(vars(contains('p_')), ~round(.x, 3))
+
+staula <- taula %>% 
+  rename(rr = rr_cas, p = p_cas) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (Cases)", class = 'cell-border stripe')
+
+staula <- taula %>% 
+  rename(rr = rr_hosp, p = p_hosp) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (hospitalisations)", class = 'cell-border stripe')
+```
+
+For cases there are some small differences in the TOP10 areas with a higher spatial relative risk, but for the hospitalization outcome there are no differences respect to the model with SIRs in the whole period. It is reasonable to think that for cases there has to be more differences considering the two different approaches, as existing big temporal differences might mask some spatial differences.
+
+We can also take in account only the structured spatial pattern and calculate the spatial structured residual RRs: $RR_{\text{Spatial Structured}} = exp(u_*)$.
+
+`r fig_nums("spatial_rr_struc", "Map of the posterior mean estimates of the spatial pattern effect (only the structured one)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea) + nrow(map)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+`r fig_nums("temp_rr", "Plot of the posterior mean estimates of the temporal trends of each week")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Temporal trends
+rr_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idtime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, mean, "0.025quant", "0.975quant") %>% 
+  mutate_if(is.numeric, exp)
+
+srr_temp <- rr_temp %>% 
+  filter(outcomes == "cas")
+
+plot_temp <- tibble(data = unique(dat$data), rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`)
+
+p1 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = rr*3000), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = rr*3000), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*3000, ymax = rr_uci*3000), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*3000, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./3000, name = "Temporal effect"))
+
+srr_temp <- rr_temp %>% 
+  filter(outcomes == "hosp")
+
+plot_temp <- tibble(data = unique(dat$data)[unique(dat$data) >= ymd("2020-05-03")], rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`)
+
+p2 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*30, ymax = rr_uci*30), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*30, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./30, name = "Temporal effect"))
+
+p1/p2
+
+#The spatio-temporal trend cannot be represented as we have too many areas and too many weeks...
+```
+
+Now, we can see how the temporal effect has little variance in both outcomes, specially in the hospitalisation outcome, as expected because we are incorporating intrinsically the temporal trend of the whole territory in the model calculating the expected values for each week.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+    wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+    TRUE ~ data_inici
+)
+
+dat_add <- dat %>% 
+  mutate(ID = row_number()) %>% 
+  dplyr::select(ID, data, idarea, abs)
+
+rr_sp_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idareatime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, ID, rr = mean) %>% 
+  mutate(
+    rr = exp(rr)
+  ) %>% 
+  full_join(dat_add, by = "ID")
+
+abs_rs <- shapefileT@data %>%
+  distinct(abs, NOMRS)
+
+rr_sp_temp <- rr_sp_temp %>% 
+  left_join(abs_rs, by = "abs")
+
+ndat_plot <- tibble(expand.grid(nomrs = rev(sort(unique(rr_sp_temp$NOMRS))), outcomes = c("cas", "hosp"))) %>% 
+  mutate(
+    id = row_number(),
+    df = pmap(list(nomrs, outcomes, id), function(x, y, z) {
+      rr_sp_temp %>% 
+        filter(outcomes == y) %>% 
+        mutate(
+          color = case_when(
+            NOMRS %in% x ~ z,
+            TRUE ~  0
+          ),
+          alpha = case_when(
+            NOMRS %in% x ~ 1,
+            TRUE ~ 0
+          )
+        ) %>% 
+        dplyr::select(-outcomes, -NOMRS) %>% 
+        mutate(
+          xint = case_when(
+            data %in% data_inici ~ data
+          ),
+          idarea = idarea + 373*z
+        )
+      
+    })
+  )
+
+# ggplotly(ggplot(data = srr_sp_temp, aes(x = data, y = rr, group = factor(idarea), color = factor(idarea), text = abs)) +
+#   geom_line(alpha = 0.3) +
+#   geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   scale_color_discrete(guide = "none") +
+#   theme_classic() + 
+#   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+#   ggtitle("Cases"), tooltip = c("data", "text"))
+# 
+# srr_sp_temp <- rr_sp_temp %>% 
+#   filter(outcomes == "hosp")
+# 
+# ggplotly(ggplot(data = srr_sp_temp, aes(x = data, y = rr, group = factor(idarea), color = factor(idarea), text = abs)) +
+#   geom_line(alpha = 0.3) +
+#   geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+#   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+#   scale_color_discrete(guide = "none") +
+#   theme_classic() + 
+#   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+#   ggtitle("hospitalisation"), tooltip = c("data", "text"))
+```
+
+`r fig_nums("sptemp_rr_cas", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "cas") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+```
+
+`r fig_nums("sptemp_rr_hosp", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "hosp") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+
+```
+
+We get exactly the same spatio-temporal relative risks than before. For some outbreaks, for example in Lleida an Girona, the estimated RR of the spatio-temporal effect over the hospitalisation outcome are a little bit lower than before.
+
+# Spatio-temporal models adjusted by spatial covariates
+
+We ajust the model by some spatial covariates that might be related to the outcomes. The selected variables are the urban/rural variable and the seven socio-economic variables along with the index that combines all of them. Remember that as higher is the socio-economic index, poorer is the area. We won't adjust by the density because it is a variable that has a lot of variance (see the previous map) as areas have a lot of differences in density between them. We will use the urban/rural variable instead, that it is related to the density but it represents best the area and the effect that we want to capture. 
+
+Before adjusting by the selected covariates in the model, we have to check that we don't have problems of multicollinearity. Thus, first let's see which of the socieconomic index components are correlated, before adjusting by them in the model:
+
+`r fig_nums("corr_covar_2", "Plot of the correlation of the different socioeconomic components")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+dat_covar %>% 
+  dplyr::select(var_lab2$var) %>% 
+  ggpairs(upper = list(continuous = wrap("cor", method = "spearman")))
+```
+
+We see that there're various components that are correlated, as it could be expected. For pair of components with correlation > 0.7 we will only select one of them. So, for the pair of components related to the income, we will select only the <18k one. And also for the pair of components income and manual ocupated we will select also the income one.
+
+Let's see also how the SI index and its components are related with the urban areas
+
+`r fig_nums("boxplot_urban", "Boxplot of the SI index and its components between rural and urban areas")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+nplot <- rbind(var_lab %>% filter(var == "isc"), var_lab2) %>% 
+  mutate(
+    plot = map2(var, lab, function (var, lab) {
+      
+      ggplot(dat_covar, aes(x = urban, y = get(var), fill = urban)) + 
+        geom_boxplot(outlier.shape = NA, na.rm = TRUE) + 
+        geom_point(shape=21,position=position_jitterdodge()) +
+        ylab(lab) +
+        scale_fill_manual(name = "", values = c("#CCEBC5", "#DECBE4"), guide = "none") +
+        xlab("") +
+        theme_minimal()
+      
+    })
+  )
+
+for(i in 1:nrow(nplot)) {
+  print(nplot$plot[[i]])
+}
+
+```
+
+In general urban areas have more dispersion than rural ones, but in general they have similar overall values. Only population income < 18k and manual employed population is higher in rural areas than urban ones, whereas avoidable hospitalisations are higher in the urban areas.
+
+We can also calculate the variance-inflation factors for the set of predictors that we will use as fixed effects in the model:
+
+`r tab_nums("vif_covar", "Variance-inflation factor to check some potential collinearity using these covariates as a set of predictors in the same time")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://www.nature.com/articles/s41598-020-73879-3
+sdat_covar <- dat_covar %>% 
+  mutate(
+    urban = as.numeric(urban) - 1
+  ) %>% 
+  dplyr::select("Urban areas" = urban, "Socioeconomic index (SI)" = isc) %>% 
+  as.data.frame()
+
+taula <- vif(sdat_covar)
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+`r tab_nums("vif_covar_2", "Variance-inflation factor to check some potential collinearity using as covariate the set of socieconomic index components + urban")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# https://www.nature.com/articles/s41598-020-73879-3
+sdat_covar <- dat_covar %>% 
+  mutate(urban = as.numeric(urban) - 1) %>% 
+  dplyr::select(urban, var_lab2$var, -poblacio_amb_rendes_superiors_a_100_000_euros, -poblacio_amb_ocupacions_manuals) %>% 
+  as.data.frame() 
+
+names(sdat_covar) <- c("Urban", var_lab2$lab[var_lab2$var %in% names(sdat_covar)])
+
+taula <- vif(sdat_covar)
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+There is no collinearity in both sets of models, so we can adjust the previous models by these two different sets of covariables. 
+
+The models that have been considered are the following:
+
+- Raw spatio-temporal model (the previous one)
+
+- Model adjusted by urban/rural
+
+- Model adjusted by urban/rural + Socioeconomic Index (SI)
+
+- Model adjusted by urban/rural + socioeconomic components
+
+#### SIR whole period
+
+To illustrate the necessity of adjusting by the socieoconomic index, before showing the results of the adjusted models we will illustrate the differences that exist on the SI index between the estimated spatial, spatio-temporal and overall relative risk hot and cold spots of the previous raw model for the hospitalisation outcome. Remember that a hot spot is defined as an area having a probability higher than 0.8 of having a risk given by the corresponding effect higher than the total of the territory, whereas a cold spots is an area with an estimated probability lower than 0.2. 
+
+`r fig_nums("hot_cold_spatial_si2", "Difference on the socioeconomic index between hot/mild/cold spots given by the residual spatial effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- ndat_sae_II %>% 
+  filter(effect == "sir2", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("idarea") %>% 
+  mutate(idarea = as.integer(idarea))
+
+plot_si <- dat %>% 
+  group_by(codi_abs) %>% 
+  summarise(idarea = unique(idarea), isc = unique(isc)) %>% 
+  full_join(p_spatial, by = "idarea")
+
+ggplot(plot_si, aes(x = p_cat, y = isc, fill = p_cat)) + 
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+We can see how spatial cold spots have lower values of the Socioeconomic Index (SI) whereas hot spots have higher values. This make us think that the SI index can explain part of the spatial variance that it was estimated by the raw model as it seems that this variable has a risk effect on the hospitalisation outcome.
+
+`r fig_nums("hot_cold_spatial_temp_si2", "Difference on the socioeconomic index between hot/cold spots given by the residual spatio-temporal effect on hospitalisation, for each wave")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- ndat_sae_II %>% 
+  filter(effect == "sir2", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+
+```
+
+There're no clear differences on the SI index values between hot and cold spots given by the spatio-temporal residual risk.
+
+`r fig_nums("hot_cold_all_si2", "Difference on the socioeconomic index between hot/cold spots given by the posterior RR effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12}
+p_rr <- ndat_sae_II %>% 
+  filter(effect == "sir2", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Cold spots have systematically lower values of the SI index. We can see how calculating the SIR by the whole period we have weeks where there're almost no hot spots. This is because these weeks correspond to low hospitalisation weeks and thus the areas have small risk, because we're comparing with the expected values in the whole period.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  res_sae_raw %>% 
+    filter(effect == "sir2") %>% 
+    mutate(model = "Raw"),
+  res_sae_urban %>%
+    filter(effect == "sir2") %>%
+    mutate(model = "Urban"),
+  res_sae_si %>% 
+    filter(effect == "sir2") %>% 
+    mutate(model = "Urban + SI"),
+  res_sae_int %>% 
+    filter(effect == "sir2") %>% 
+    mutate(model = "Urban x SI"),
+  res_sae_si_comp %>% 
+    filter(effect == "sir2") %>%
+    mutate(model = "Urban + SI components")
+)
+```
+
+`r tab_nums("dic_waic_covar2", "Description of estimated DIC and WAIC for each model")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>% 
+  dplyr::select(model, outcomes, dic, waic) %>% 
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>% 
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  add_header_above(c(" " = 1, "Cases" = 2, "hospitalisation" = 2))
+```
+
+Adjusted models don't perform better than the raw model for the hospitalisation outcome. For the cases outcome, the model adjusted by the SI components fits best the data.
+
+`r tab_nums("hp_covar_cases2", "Estimated values of the SD and Phi hyperparameter of the model for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, hp, function(x, y) {
+      
+      y %>% 
+        mutate(
+          var = factor(var, levels = c(
+            "(Intercept)",
+            "urbanUrban",
+            "isc",
+            "urbanRural:isc",
+            "urbanUrban:isc",
+            "poblacio_exempta_de_copagament_farmaceutic",
+            "poblacio_amb_rendes_inferiors_a_18_000_euros",
+            "poblacio_amb_nivell_dinstruccio_insuficient",
+            "taxa_de_mortalitat_prematura",
+            "hospitalitzacions_evitables",
+            "Precision for idarea",
+            "Phi for idarea",
+            "Precision for idtime",
+            "Precision for idareatime"
+          ), labels = c(
+            "(Intercept)",
+            "Urban vs Rural",
+            "Socioeconomic Index (SI)",
+            "Socioeconomic Index (SI) [Rural areas]",
+            "Socioeconomic Index (SI) [Urban areas]",
+            "Population exempted from pharmaceutical co-payment",
+            "Population income < 18k€",
+            "Population with insufficient education",
+            "Premature mortality rate",
+            "Avoidable hospitalisations",
+            "SD (idarea)",
+            "Phi for idarea",
+            "SD (idtime)",
+            "SD (idareatime)"
+          ))
+        )
+      
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(var)
+
+names(taula)[1] <- ""
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 10
+  ) %>% 
+  pack_rows(
+    "Random effects", 11, 14
+  )
+```
+
+Urban areas have a risk effect of the 7%. The SI index have a close to significance protector effect of 1%. The effect doesn't change much between rural and urban areas. The other SI component that doesn't have a non-significant effect is the income that has a protective effect of the 3%. 
+
+The role of the structure spatial effect decreases a lot for the adjusted models compared to the raw model.
+
+`r tab_nums("var_exp_cases2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases for the adjusted models while the temporal or the spatio-temporal variance increases. Differences are overall small.
+
+`r tab_nums("hp_covar_hosp2", "Estimated values of the SD and Phi hyperparameter of the model for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, hp, function(x, y) {
+      
+      y %>% 
+        mutate(
+          var = factor(var, levels = c(
+            "(Intercept)",
+            "urbanUrban",
+            "isc",
+            "urbanRural:isc",
+            "urbanUrban:isc",
+            "poblacio_exempta_de_copagament_farmaceutic",
+            "poblacio_amb_rendes_inferiors_a_18_000_euros",
+            "poblacio_amb_nivell_dinstruccio_insuficient",
+            "taxa_de_mortalitat_prematura",
+            "hospitalitzacions_evitables",
+            "Precision for idarea",
+            "Phi for idarea",
+            "Precision for idtime",
+            "Precision for idareatime"
+          ), labels = c(
+            "(Intercept)",
+            "Urban vs Rural",
+            "Socioeconomic Index (SI)",
+            "Socioeconomic Index (SI) [Rural areas]",
+            "Socioeconomic Index (SI) [Urban areas]",
+            "Population exempted from pharmaceutical co-payment",
+            "Population income < 18k€",
+            "Population with insufficient education",
+            "Premature mortality rate",
+            "Avoidable hospitalisations",
+            "SD (idarea)",
+            "Phi for idarea",
+            "SD (idtime)",
+            "SD (idareatime)"
+          ))
+        )
+      
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(var)
+
+names(taula)[1] <- ""
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 10
+  ) %>% 
+  pack_rows(
+    "Random effects", 11, 14
+  )
+```
+
+Urban areas have a risk effect (17%) and the SI index has a risk effect (19%). The SI effect is higher in urban areas but the difference is not big. Of all the SI components, co-payment, income and avoidable hospitalisations have a risk effect of the 9%, 11% and 4% respectively.
+
+The role of the structured spatial effect decreases for the adjusted models, specially for the model adjusted by the SI index that it decreases a lot. 
+
+`r tab_nums("var_exp_hosp2", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases when adjusting by the variables in benefit of the temporal and spatio-temporal variance.
+
+Let's plot the posterior estimates of the model adjusted by SI.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- ndat_sae_si %>% 
+  filter(effect == "sir2")
+```
+
+`r fig_nums("spatial_rr_covar2", "Map of the posterior mean estimates of the residual spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+The map for the cases is similar to the one for the raw model. For the hospitalisations is a little bit more different and also the range of the values is smaller as part of the spatial variance is explained by differences in the level of the SI index.
+
+`r fig_nums("spatial_p_covar2", "Map of the posterior probability that the relative risk of the spatial pattern effect exceeds the threshold 1")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#We can also plot the posterior probability that the spatial effect exceeds the threshold 0
+# https://martablangiardo.github.io/Practical9/#5_Spatio-temporal_model_(type_I_interaction)
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("(0, 0.2]", "0.2-0.8", "[0.8, 1]")))
+
+map$p_cas <- p_spatial %>% filter(outcomes == "cas") %>% pull(p_cat)
+map$p_hosp <- p_spatial %>% filter(outcomes == "hosp") %>% pull(p_cat)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_cas)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_cas)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_hosp)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_hosp)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+```
+
+The map for the cases is very similar to the previous one for the raw model. For hospitalisations, there are more changes as now areas that were cold/hot spots for the spatial effect are areas with probabilities between 0.2 and 0.8 and also areas that were not cold/hot spots are now spatial cold/hot spots. 
+
+`r tab_nums("rr_spatial_spots_covar2", "Description table of the RR and p-value of the spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) 
+
+taula <- shapefileT@data %>% 
+  mutate(
+    rr_cas = rr_spatial %>% filter(outcomes == "cas") %>% pull(rr),
+    p_cas = p_spatial %>% filter(outcomes == "cas") %>% pull(p),
+    rr_hosp = rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr),
+    p_hosp = p_spatial %>% filter(outcomes == "hosp") %>% pull(p),
+  ) %>% 
+  mutate_at(vars(contains('rr_')), ~round(.x, 3)) %>% 
+  mutate_at(vars(contains('p_')), ~round(.x, 3))
+
+staula <- taula %>% 
+  rename(rr = rr_cas, p = p_cas) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (Cases)", class = 'cell-border stripe')
+
+staula <- taula %>% 
+  rename(rr = rr_hosp, p = p_hosp) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (hospitalisations)", class = 'cell-border stripe')
+```
+
+Top hospitalisations hot spots have considerable changes respect to the raw model, whereas the ones for the cases are similar.
+
+`r fig_nums("spatial_rr_struc_covar2", "Map of the posterior mean estimates of the spatial pattern effect (only the structured one)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea) + nrow(map)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+`r fig_nums("temp_rr_covar2", "Plot of the posterior mean estimates of the temporal trends of each week")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Temporal trends
+temp <- sdat_sae %>% 
+  mutate(
+    effect = map(res, ~.x$summary.random$idtime)
+  ) %>% 
+  dplyr::select(outcomes, effect) %>% 
+  unnest(effect) %>% 
+  dplyr::select(outcomes, mean, "0.025quant", "0.975quant") %>% 
+  mutate_if(is.numeric, ~exp(.x))
+
+stemp <- temp %>% 
+  filter(outcomes == "cas")
+
+plot_temp <- tibble(data = unique(dat$data), effect = stemp$mean, effect_lci = stemp$`0.025quant`, effect_uci = stemp$`0.975quant`)
+
+p1 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = effect*150), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = effect*150), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*150, ymax = effect_uci*150), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*150, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./150, name = "Temporal IRR"))
+
+stemp <- temp %>%
+  filter(outcomes == "hosp")
+
+plot_temp <- tibble(data = unique(dat$data)[unique(dat$data) >= ymd("2020-05-03")], effect = stemp$mean, effect_lci = stemp$`0.025quant`, effect_uci = stemp$`0.975quant`)
+
+p2 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() +
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = effect*14), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = effect*14), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*14, ymax = effect_uci*14), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*14, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./14, name = "Temporal IRR"))
+
+p1/p2
+
+#The spatio-temporal trend cannot be represented as we have too many areas and too many weeks...
+```
+
+Estimated temporal trends are the same.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+    wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+    TRUE ~ data_inici
+)
+
+dat_add <- dat %>% 
+  mutate(ID = row_number()) %>% 
+  dplyr::select(ID, data, idarea, abs)
+
+rr_sp_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idareatime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, ID, rr = mean) %>% 
+  mutate(
+    rr = exp(rr)
+  ) %>% 
+  full_join(dat_add, by = "ID")
+
+abs_rs <- shapefileT@data %>%
+  distinct(abs, NOMRS)
+
+rr_sp_temp <- rr_sp_temp %>% 
+  left_join(abs_rs, by = "abs")
+
+ndat_plot <- tibble(expand.grid(nomrs = rev(sort(unique(rr_sp_temp$NOMRS))), outcomes = c("cas", "hosp"))) %>% 
+  mutate(
+    id = row_number(),
+    df = pmap(list(nomrs, outcomes, id), function(x, y, z) {
+      rr_sp_temp %>% 
+        filter(outcomes == y) %>% 
+        mutate(
+          color = case_when(
+            NOMRS %in% x ~ z,
+            TRUE ~  0
+          ),
+          alpha = case_when(
+            NOMRS %in% x ~ 1,
+            TRUE ~ 0
+          )
+        ) %>% 
+        dplyr::select(-outcomes, -NOMRS) %>% 
+        mutate(
+          xint = case_when(
+            data %in% data_inici ~ data
+          ),
+          idarea = idarea + 373*z
+        )
+      
+    })
+  )
+```
+
+`r fig_nums("sptemp_rr_covar2_cas", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "cas") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+```
+
+Estimated spatio-temporal trends are the same.
+
+`r fig_nums("sptemp_rr_covar2_hosp", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "hosp") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+
+```
+
+Estimated spatio-temporal trends have the same patterns although the range of values are a little bit higher.
+
+As before, let's illustrate now the differences on the SI index for the estimated hot/cold spots given by the overall relative risk. 
+
+`r fig_nums("hot_cold_all_si2", "Difference on the socioeconomic index between hot/cold spots given by the posterior RR effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12}
+p_rr <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In concordance with the estimated effects, cold spots have generally lower SI index across all the period.
+
+#### SIR by week
+
+Let's illustrate the differences on the SI index between hot and cold spots estimated by the previous raw model on the hospitalisation.
+
+`r fig_nums("hot_cold_spatial_si", "Difference on the socioeconomic index between hot/mild/cold spots given by the residual spatial effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+p_spatial <- ndat_sae_II %>% 
+  filter(effect == "sir", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("idarea") %>% 
+  mutate(idarea = as.integer(idarea))
+
+plot_si <- dat %>% 
+  group_by(codi_abs) %>% 
+  summarise(idarea = unique(idarea), isc = unique(isc)) %>% 
+  full_join(p_spatial, by = "idarea")
+
+ggplot(plot_si, aes(x = p_cat, y = isc, fill = p_cat)) + 
+  geom_boxplot(outlier.shape=NA,na.rm=T) +
+  geom_point(shape=21,position=position_jitterdodge()) +
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(values = c("#42e7e9", "white", "#bd1816"), guide = FALSE) +
+  xlab("") +
+  theme_minimal()
+```
+
+We can see how spatial cold spots have lower values of the Socioeconomic Index (SI) whereas hot spots have higher values. This make us think that the SI index can explain part of the spatial variance that it was estimated by the raw model as it seems that this variable has a risk effect on the hospitalisation outcome.
+
+`r fig_nums("hot_cold_spatial_temp_si", "Difference on the socioeconomic index between hot/cold spots given by the residual spatio-temporal effect on hospitalisation, for each wave")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+p_spatial_temp <- ndat_sae_II %>% 
+  filter(effect == "sir", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idareatime, function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_spatial_temp, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         )
+  )
+  
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+
+```
+
+We don't see clear differences between hot and cold spots given by the residual spatio-temporal risk.
+
+`r fig_nums("hot_cold_all_si", "Difference on the socioeconomic index between hot/cold spots given by the posterior RR effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12}
+p_rr <- ndat_sae_II %>% 
+  filter(effect == "sir", outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+Hot spots have systematically in the whole period higher values of the SI index.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- rbind(
+  res_sae_raw %>% 
+    filter(effect == "sir") %>% 
+    mutate(model = "Raw"),
+  res_sae_urban %>%
+    filter(effect == "sir") %>%
+    mutate(model = "Urban"),
+  res_sae_si %>% 
+    filter(effect == "sir") %>% 
+    mutate(model = "Urban + SI"),
+  res_sae_int %>% 
+    filter(effect == "sir") %>% 
+    mutate(model = "Urban x SI"),
+  res_sae_si_comp %>% 
+    filter(effect == "sir") %>%
+    mutate(model = "Urban + SI components")
+)
+```
+
+`r tab_nums("dic_waic_covar", "Description of estimated DIC and WAIC for each model")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>% 
+  dplyr::select(model, outcomes, dic, waic) %>% 
+  pivot_wider(names_from = outcomes, values_from = c(dic, waic)) %>% 
+  dplyr::select(model, dic_cas, waic_cas, dic_hosp, waic_hosp)
+
+names(taula) <- c("", rep(c("DIC", "WAIC"), 2))
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  add_header_above(c(" " = 1, "Cases" = 2, "hospitalisation" = 2))
+```
+
+Adjusted models doesn't improve the raw model. The adjusted model with better performance is the one adjusted by urban and the SI index.
+
+`r tab_nums("hp_covar_cases", "Estimated values of the SD and Phi hyperparameter of the model for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "cas") %>% 
+  mutate(
+    hp = map2(model, hp, function(x, y) {
+      
+      y %>% 
+        mutate(
+          var = factor(var, levels = c(
+            "(Intercept)",
+            "urbanUrban",
+            "isc",
+            "urbanRural:isc",
+            "urbanUrban:isc",
+            "poblacio_exempta_de_copagament_farmaceutic",
+            "poblacio_amb_rendes_inferiors_a_18_000_euros",
+            "poblacio_amb_nivell_dinstruccio_insuficient",
+            "taxa_de_mortalitat_prematura",
+            "hospitalitzacions_evitables",
+            "Precision for idarea",
+            "Phi for idarea",
+            "Precision for idtime",
+            "Precision for idareatime"
+          ), labels = c(
+            "(Intercept)",
+            "Urban vs Rural",
+            "Socioeconomic Index (SI)",
+            "Socioeconomic Index (SI) [Rural areas]",
+            "Socioeconomic Index (SI) [Urban areas]",
+            "Population exempted from pharmaceutical co-payment",
+            "Population income < 18k€",
+            "Population with insufficient education",
+            "Premature mortality rate",
+            "Avoidable hospitalisations",
+            "SD (idarea)",
+            "Phi for idarea",
+            "SD (idtime)",
+            "SD (idareatime)"
+          ))
+        )
+      
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(var)
+
+names(taula)[1] <- ""
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 10
+  ) %>% 
+  pack_rows(
+    "Random effects", 11, 14
+  )
+```
+
+Estimated values are very similar than for the SIR in the whole period. Urban areas have a risk effect of the 6%. The co-payment SI component has a close to significance risk effect (2%) and the low income has a protective effect (3%). The other effects are non-significant. 
+
+From the random effect hyperparameter estimates, we can see how for the adjusted models the role of the structure model decreases, as areas that are close together have similar values on the spatial covariates, so they explain part of the spatial structural effect. 
+
+`r tab_nums("var_exp_cases", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "cas") %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance has a lower role in the adjusted models, as part of this variance is explained by covariates. 
+
+`r tab_nums("hp_covar_hosp", "Estimated values of the SD and Phi hyperparameter of the model for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Estimated model hyperparameters mean and credible interval:
+taula <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    hp = map2(model, hp, function(x, y) {
+      
+      y %>% 
+        mutate(
+          var = factor(var, levels = c(
+            "(Intercept)",
+            "urbanUrban",
+            "isc",
+            "urbanRural:isc",
+            "urbanUrban:isc",
+            "poblacio_exempta_de_copagament_farmaceutic",
+            "poblacio_amb_rendes_inferiors_a_18_000_euros",
+            "poblacio_amb_nivell_dinstruccio_insuficient",
+            "taxa_de_mortalitat_prematura",
+            "hospitalitzacions_evitables",
+            "Precision for idarea",
+            "Phi for idarea",
+            "Precision for idtime",
+            "Precision for idareatime"
+          ), labels = c(
+            "(Intercept)",
+            "Urban vs Rural",
+            "Socioeconomic Index (SI)",
+            "Socioeconomic Index (SI) [Rural areas]",
+            "Socioeconomic Index (SI) [Urban areas]",
+            "Population exempted from pharmaceutical co-payment",
+            "Population income < 18k€",
+            "Population with insufficient education",
+            "Premature mortality rate",
+            "Avoidable hospitalisations",
+            "SD (idarea)",
+            "Phi for idarea",
+            "SD (idtime)",
+            "SD (idareatime)"
+          ))
+        )
+      
+    })
+  ) %>% 
+  dplyr::select(model, hp) %>% 
+  unnest(hp) %>% 
+  pivot_wider(names_from = "model", values_from = c("est")) %>% 
+  arrange(var)
+
+names(taula)[1] <- ""
+
+options(knitr.kable.NA = '')
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  pack_rows(
+    "Fixed effects", 1, 10
+  ) %>% 
+  pack_rows(
+    "Random effects", 11, 14
+  )
+```
+
+Estimated values are very similar than for the SIR calculated taking in account the whole period. Urban areas have a risk effect on hospitalisation (17%). Also, the socieoconomic index has a risk effect (18%). The SI effect is bigger in urban areas but there are no big differences. For the SI components, the co-payment, the income and avoidable hospitalisations have a risk effect of the 9%, 11% and 3% respectively.
+
+For all the adjusted models except the adjusted by urban areas the role of the structural spatial effect decreases, compared to the raw model. As before, this might happen because part of the differences that before where explained by proximity now are explained by having same levels of these covariates, as poorer areas are close to each other for example. 
+
+`r tab_nums("var_exp_hosp", "Percentage of explained variability by the spatial, temporal and spatio-temporal patterns of every model on the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+taula <- sdat_sae %>%
+  filter(outcomes == "hosp") %>% 
+  unnest(var) %>% 
+  dplyr::select(model, contains("Precision"))
+
+names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
+
+kable(taula) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+The spatial variance decreases when adjusting by the covariates as part of the spatial differences are now explained by these covariates. The role of the spatio-temporal variance increases in detriment of this spatial variance.
+
+Let's plot the posterior estimates of the model adjusted by urban and SI index, that is the best adjusted model for the hospitalisation outcome in terms of the DIC/WAIC.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sdat_sae <- ndat_sae_si %>% 
+  filter(effect == "sir")
+```
+
+`r fig_nums("spatial_rr_covar", "Map of the posterior mean estimates of the residual spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+The map of the spatial relative risk of cases is very similar than the previous one for the raw model. The map of hospitalisation is a little bit different because the range of the RR effect is lower as it has less variability, because this spatial variability is now explained by the covariates.
+
+`r fig_nums("spatial_p_covar", "Map of the posterior probability that the relative risk of the spatial pattern effect exceeds the threshold 1")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#We can also plot the posterior probability that the spatial effect exceeds the threshold 0
+# https://martablangiardo.github.io/Practical9/#5_Spatio-temporal_model_(type_I_interaction)
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("(0, 0.2]", "0.2-0.8", "[0.8, 1]")))
+
+map$p_cas <- p_spatial %>% filter(outcomes == "cas") %>% pull(p_cat)
+map$p_hosp <- p_spatial %>% filter(outcomes == "hosp") %>% pull(p_cat)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_cas)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_cas)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = p_hosp)) +
+  scale_fill_manual(
+    values = c("#42e7e9", "white", "#bd1816")
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+    geom_sf(aes(fill = p_hosp)) +
+    theme_bw() +
+    theme(
+        axis.ticks = element_blank(),
+        axis.text = element_blank()
+    ) +
+    scale_fill_manual(
+      values = c("#42e7e9", "white", "#bd1816"), guide = "none"
+    ) +
+    coord_sf(
+        xlim = c(2.1, 2.25),
+        ylim = c(41.32, 41.475)
+    ) +
+    theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+    )
+
+cat + 
+    annotation_custom(
+        grob = ggplotGrob(bcn),
+        xmin = 2,
+        xmax = 3.8,
+        ymin = 40.5,
+        ymax = 41.4
+    ) +
+    geom_segment(
+        x = 2.1,
+        xend = 2.48,
+        y = 41.32,
+        yend = 40.52,
+        linewidth = 0.1
+    ) +
+    geom_segment(
+        x = 2.25,
+        xend = 3.33,
+        y = 41.48,
+        yend = 41.4,
+        linewidth = 0.1
+    ) +
+    geom_rect(
+        xmin = 2.1,
+        xmax = 2.25,
+        ymin = 41.32,
+        ymax = 41.48,
+        alpha = 0,
+        color = "black"
+    )
+
+```
+
+The map for the cases is very similar to the previous one for the raw model. For hospitalisations, there are more changes as now areas that were cold/hot spots for the spatial effect are areas with probabilities between 0.2 and 0.8 and also areas that were not cold/hot spots are now spatial cold/hot spots. 
+`r tab_nums("rr_spatial_spots_covar", "Description table of the RR and p-value of the spatial effect")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+p_spatial <- sdat_sae %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$marginals.random$idarea[unique(dat$idarea)], function(x) {1-inla.pmarginal(0, x)}))
+  ) %>% 
+  dplyr::select(outcomes, p) %>% 
+  unnest(p) 
+
+taula <- shapefileT@data %>% 
+  mutate(
+    rr_cas = rr_spatial %>% filter(outcomes == "cas") %>% pull(rr),
+    p_cas = p_spatial %>% filter(outcomes == "cas") %>% pull(p),
+    rr_hosp = rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr),
+    p_hosp = p_spatial %>% filter(outcomes == "hosp") %>% pull(p),
+  ) %>% 
+  mutate_at(vars(contains('rr_')), ~round(.x, 3)) %>% 
+  mutate_at(vars(contains('p_')), ~round(.x, 3))
+
+staula <- taula %>% 
+  rename(rr = rr_cas, p = p_cas) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (Cases)", class = 'cell-border stripe')
+
+staula <- taula %>% 
+  rename(rr = rr_hosp, p = p_hosp) %>% 
+  arrange(-rr) %>% 
+  tibble::column_to_rownames("abs") %>% 
+  dplyr::select(rr, p)
+  
+datatable(staula, caption = "Spatial hot/cold spots (hospitalisations)", class = 'cell-border stripe')
+```
+
+Top areas have now changed respect to the raw model, more for hospitalisations than for cases.
+
+`r fig_nums("spatial_rr_struc_covar", "Map of the posterior mean estimates of the spatial pattern effect (only the structured one)")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+map <- st_as_sf(shapefileT) #To have a map object to print in ggplot2
+
+rr_spatial <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~exp(.x$summary.random$idarea$mean[unique(dat$idarea) + nrow(map)]))
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) 
+
+map$rr_cas <- rr_spatial %>% filter(outcomes == "cas") %>% pull(rr)
+map$rr_hosp <- rr_spatial %>% filter(outcomes == "hosp") %>% pull(rr)
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_cas)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("Cases")
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_cas)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+
+
+cat <- ggplot(map) + 
+  geom_sf(aes(fill = rr_hosp)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red"
+  ) +
+  theme_bw() +
+  theme(
+    axis.ticks = element_blank(),
+    axis.text = element_blank()
+  ) +
+  ggtitle("hospitalisation") 
+
+#map of bcn
+bcn <- ggplot(map) + 
+       geom_sf(aes(fill = rr_hosp)) +
+       theme_bw() +
+       theme(
+           axis.ticks = element_blank(),
+           axis.text = element_blank()
+       ) +
+       scale_fill_gradient2(
+        midpoint = 1, low = "blue", mid = "white", high = "red", guide = "none"
+       ) +
+       coord_sf(
+         xlim = c(2.1, 2.25),
+         ylim = c(41.32, 41.475)
+       ) +
+       theme(plot.margin = margin(0, 0, 0, 0, "cm"),
+             panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+             )
+
+cat + 
+  annotation_custom(
+    grob = ggplotGrob(bcn),
+    xmin = 2,
+    xmax = 3.8,
+    ymin = 40.5,
+    ymax = 41.4
+  ) +
+  geom_segment(
+    x = 2.1,
+    xend = 2.48,
+    y = 41.32,
+    yend = 40.52,
+    linewidth = 0.1
+  ) +
+  geom_segment(
+    x = 2.25,
+    xend = 3.33,
+    y = 41.48,
+    yend = 41.4,
+    linewidth = 0.1
+  ) +
+  geom_rect(
+    xmin = 2.1,
+    xmax = 2.25,
+    ymin = 41.32,
+    ymax = 41.48,
+    alpha = 0,
+    color = "black"
+  )
+```
+
+`r fig_nums("temp_rr_covar", "Plot of the posterior mean estimates of the temporal trends of each week")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#Temporal trends
+rr_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idtime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, mean, "0.025quant", "0.975quant") %>% 
+  mutate_if(is.numeric, exp)
+
+srr_temp <- rr_temp %>% 
+  filter(outcomes == "cas")
+
+plot_temp <- tibble(data = unique(dat$data), rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`)
+
+p1 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = rr*3000), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = rr*3000), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*3000, ymax = rr_uci*3000), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*3000, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "Case rate", sec.axis = sec_axis(~./3000, name = "Temporal effect"))
+
+srr_temp <- rr_temp %>% 
+  filter(outcomes == "hosp")
+
+plot_temp <- tibble(data = unique(dat$data)[unique(dat$data) >= ymd("2020-05-03")], rr = srr_temp$mean, rr_lci = srr_temp$`0.025quant`, rr_uci = srr_temp$`0.975quant`)
+
+p2 <- ggplot() +
+  geom_bar(data = dat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+
+  scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+  #Second axis:
+  geom_point(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) +
+  geom_line(data = plot_temp, aes(x = data, y = rr*30), alpha = 0.5) +
+  geom_ribbon(data = plot_temp, aes(x = data, ymin = rr_lci*30, ymax = rr_uci*30), alpha = 0.5, fill = "grey70") +
+  geom_hline(yintercept = 1*30, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_y_continuous(name = "hospitalisation rate", sec.axis = sec_axis(~./30, name = "Temporal effect"))
+
+p1/p2
+
+#The spatio-temporal trend cannot be represented as we have too many areas and too many weeks...
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+
+#Put the next sunday to get the first week in the wave
+data_inici <- case_when(
+    wday(data_inici) != 1 ~ data_inici + (8-wday(data_inici)),
+    TRUE ~ data_inici
+)
+
+dat_add <- dat %>% 
+  mutate(ID = row_number()) %>% 
+  dplyr::select(ID, data, idarea, abs)
+
+rr_sp_temp <- sdat_sae %>% 
+  mutate(
+    rr = map(res, ~.x$summary.random$idareatime)
+  ) %>% 
+  dplyr::select(outcomes, rr) %>% 
+  unnest(rr) %>% 
+  dplyr::select(outcomes, ID, rr = mean) %>% 
+  mutate(
+    rr = exp(rr)
+  ) %>% 
+  full_join(dat_add, by = "ID")
+
+abs_rs <- shapefileT@data %>%
+  distinct(abs, NOMRS)
+
+rr_sp_temp <- rr_sp_temp %>% 
+  left_join(abs_rs, by = "abs")
+
+ndat_plot <- tibble(expand.grid(nomrs = rev(sort(unique(rr_sp_temp$NOMRS))), outcomes = c("cas", "hosp"))) %>% 
+  mutate(
+    id = row_number(),
+    df = pmap(list(nomrs, outcomes, id), function(x, y, z) {
+      rr_sp_temp %>% 
+        filter(outcomes == y) %>% 
+        mutate(
+          color = case_when(
+            NOMRS %in% x ~ z,
+            TRUE ~  0
+          ),
+          alpha = case_when(
+            NOMRS %in% x ~ 1,
+            TRUE ~ 0
+          )
+        ) %>% 
+        dplyr::select(-outcomes, -NOMRS) %>% 
+        mutate(
+          xint = case_when(
+            data %in% data_inici ~ data
+          ),
+          idarea = idarea + 373*z
+        )
+      
+    })
+  )
+```
+
+`r fig_nums("sptemp_rr_covar_cas", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the cases outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "cas") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+```
+
+Spatio-temporal effects are the same ones than the ones for the previous raw model. 
+
+`r fig_nums("sptemp_rr_covar_hosp", "Plot of the posterior mean estimates of the spatio-temporal trends of the interaction between the area and the week, for the hospitalisation outcome")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12, fig.height = 10}
+dat_plot <- ndat_plot %>% 
+  filter(outcomes == "hosp") %>% 
+  unnest(df) 
+
+ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+        geom_line() +
+        facet_wrap(~nomrs, ncol = 2) +
+        geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
+        scale_alpha(guide = "none", range = c(0.5, 1)) +
+        scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
+        scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
+        theme_classic() + 
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        geom_vline(aes(xintercept = xint), linetype = "dashed") 
+
+```
+
+For the hospitalisation outcome spatio-temporal patterns are also the same ones than those of the raw model.
+
+Let's illustrate now the differences on the SI index for the estimated hot/cold spots given by the overall relative risk. Obviously, we won't check the differences in the spatial and spatio-temporal effect because we won't see any differences as it would be the residual spatial and spatio-temporal effect that remains unexplained by the effect of urban and SI. 
+
+`r fig_nums("hot_cold_all_si", "Difference on the socioeconomic index between hot/cold spots given by the posterior RR effect on hospitalisation")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.width = 12}
+p_rr <- sdat_sae %>% 
+  filter(outcomes == "hosp") %>% 
+  mutate(
+    p = map(res, ~ sapply(.x$summary.fitted.values$`1 cdf`, function(x) {1-x}))
+  ) %>% 
+  dplyr::select(p) %>% 
+  unnest(p) %>% 
+  mutate(p_cat = case_when(
+          p <= 0.2 ~ 1,
+          p < 0.8 ~ 2,
+          TRUE ~ 3
+         ),
+         p_cat = factor(p_cat, levels = 1:3, labels = c("Cold spot", "Mild spot", "Hot spot"))) %>% 
+  rownames_to_column("id") %>% 
+  mutate(id = as.integer(id))
+
+plot_si <- dat %>% 
+  filter(data >= ymd("2020-05-03")) %>% 
+  mutate(id = row_number()) %>% 
+  full_join(p_rr, by = "id") %>% 
+  filter(p_cat != "Mild spot") %>% 
+  mutate(p_cat = droplevels(p_cat),
+         group = as.numeric(factor(paste(data, p_cat))),
+         wave = case_when(
+          data < data_inici[2] ~ 1,
+          data < data_inici[3] ~ 2,
+          data < data_inici[4] ~ 3,
+          data < data_inici[5] ~ 4,
+          data < data_inici[6] ~ 5,
+          TRUE ~ 6
+         ))
+
+ggplot(plot_si, aes(x = data, y = isc, fill = p_cat, group = group)) + 
+  facet_wrap(~wave, ncol = 2, scales = "free_x") +
+  geom_boxplot(outlier.shape = NA, color = "#D3D3D3") + 
+  ylab("Socioeconomic Index (SI)") +
+  scale_fill_manual(name = "", values = c("#42e7e9", "#bd1816")) +
+  theme_minimal()
+```
+
+In concordance with the estimated effects, we have higher values of SI index for the hot spots across all the period.
