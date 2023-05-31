@@ -153,18 +153,19 @@ dat_edat <- read.socrata(
 ) %>% 
   rename(SEXE=sexedescripcio,edat=edatrang,TIPUS=resultatcoviddescripcio) %>% 
   #Hi ha missings de ABS, els treiem pel mapa per ABS (si volguéssim calcular el total els hauríem d'incloure)
-  subset(TIPUS!="Sospitós") %>% 
+  filter(TIPUS!="Sospitós", edat!="No classificat") %>% 
   mutate(data=as.Date(data,format="%d/%m/%Y")+1,
          numcasos=as.integer(numcasos)) %>%
   as.data.frame()
 
 #----- POPULATION and age (comentar perquè no s'ha d'actualitzar)-----
-# pob_abs<-vroom(file.path(dades_ana,"Registre_central_de_poblaci__del_CatSalut.csv"),delim=",") %>%
-#   subset(any==2020) %>% 
-#   dplyr::select(CODIABS="codi Àrea Bàsica de Saut",SEXE="gènere",edat,total="població oficial") 
+# pob_abs<-read.csv(file.path(dades,"Registre_central_de_poblaci__del_CatSalut.csv")) %>%
+#   subset(any==2020) %>%
+#   rename_all(~gsub("\\.", " ", .x)) %>%
+#   dplyr::select(CODIABS="codi Àrea Bàsica de Saut",SEXE="gènere",edat,total="població oficial")
 # pob_abs$edat<-cut(pob_abs$edat,breaks=c(min(pob_abs$edat),seq(10,90,10),max(pob_abs$edat)),labels=unique(dat_edat$edat),right=FALSE,include.lowest=TRUE)
-# pob_abs<-pob_abs %>% 
-#   group_by(SEXE,CODIABS,edat) %>% 
+# pob_abs<-pob_abs %>%
+#   group_by(SEXE,CODIABS,edat) %>%
 #   summarise(total=sum(total))
 #-----------------------
 load(file.path(dades_ana,"pob_abs.Rda"))
