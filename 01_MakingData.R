@@ -376,8 +376,8 @@ dat_vac <- dat_vac %>%
   mutate(wday = wday(data)) %>% 
   #Filter sundays:
   filter(wday == 1) %>% 
-  #Exclude the first one as we don't have sufficient cumulative data (we will take the first complete week that starts at 2021-01-10):
-  filter(data > ymd("2021-01-03")) %>% 
+  #Exclude the first one as we don't have sufficient cumulative data (we will take the first complete week that starts at 2021-01-11):
+  filter(data > ymd("2021-01-10")) %>% 
   dplyr::select(-wday) %>% 
   ungroup()
 

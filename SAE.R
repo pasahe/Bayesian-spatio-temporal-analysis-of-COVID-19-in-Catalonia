@@ -1283,8 +1283,10 @@ inla_mod_covar <- function(df, outcome = "cas", effect = "sir", var = "si") {
     var == "urban" ~ "urban +",
     var == "si" ~ "urban + isc +",
     var == "int" ~ "urban/isc +",
-    var == "si_comp" ~ "urban + poblacio_exempta_de_copagament_farmaceutic + poblacio_amb_rendes_inferiors_a_18_000_euros + poblacio_amb_nivell_dinstruccio_insuficient + taxa_de_mortalitat_prematura + hospitalitzacions_evitables +"
+    var == "si_comp" ~ "urban + poblacio_exempta_de_copagament_farmaceutic + poblacio_amb_rendes_inferiors_a_18_000_euros + poblacio_amb_nivell_dinstruccio_insuficient + taxa_de_mortalitat_prematura + hospitalitzacions_evitables +",
+    var == "si2" ~ "urban + isc + I(isc^2) +"
   )
+  
   
   formula <- as.formula(str_glue('n ~ {var_mod}
     f(idarea, model = "bym2", graph = g, hyper = pc_prior, constr = TRUE) +
@@ -1553,6 +1555,56 @@ save(res_sae_int, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae
 save(ndat_sae_si_comp, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si_comp.Rda"))
 save(res_sae_si_comp, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_comp.Rda"))
 
+#Quadratic effect of the Socio-economic index on cases
+ndat_sae_si_quad <- tibble(expand.grid(outcomes = c("cas"), effect = c("sir2"))) %>% 
+  mutate_if(is.factor, as.character) %>% 
+  mutate(
+    res = map2(outcomes, effect, ~inla_mod_covar(dat, outcome = .x, effect = .y, var = "si2"))
+  )
+
+res_sae_si_quad <- ndat_sae_si_quad %>% 
+  mutate(
+    dic = map_dbl(res, ~.x$dic$dic),
+    waic = map_dbl(res, ~.x$waic$waic),
+    hp = map(res, function(x) {
+      
+      est <- summary(x)$fixed %>% 
+        as.data.frame() %>% 
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>%
+        tibble::rownames_to_column(var = "var") %>% 
+        dplyr::select(var, est)
+      
+      hp <- x$summary.hyperpar %>% 
+        as.data.frame() %>% 
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>% 
+        dplyr::select(est) %>% 
+        tibble::rownames_to_column(var = "var")
+      
+      rbind(est, hp)
+    }
+    ),
+    var = map(res, ~as.data.frame(inla.hyperpar.sample(10000, .x)) %>% 
+                dplyr::select(contains("Precision")) %>% 
+                mutate_all(~1/.x) %>% 
+                mutate(tvar = rowSums(.),
+                       `Precision for idarea` = `Precision for idarea`/tvar,
+                       `Precision for idtime` = `Precision for idtime`/tvar,
+                       `Precision for idareatime` = `Precision for idareatime`/tvar
+                ) %>% 
+                summarise(across(-tvar, ~round(mean(.x)*100, 2)))
+    )
+  ) %>% 
+  dplyr::select(-res)
+
+save(ndat_sae_si_quad, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si_quad.Rda"))
+save(res_sae_si_quad, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_quad.Rda"))
+
 #--------Effect of vaccination---------
 #We include the cumulative fully vaccination percentage because of the argument given in https://stats.stackexchange.com/questions/425055/time-varying-covariates-in-longitudinal-mixed-effect-models
 
@@ -1627,18 +1679,18 @@ inla_mod_vac <- function(df, outcome = "cas", effect = "sir", lag = 1, vac = TRU
   
 }
 
-#We have fully vaccinated data since 2020-28-12 but before 2021-01-17 there are very few cases. We have to take two weeks more to incorporate the lag ("2021-01-31"). Also for the 5th wave we will have to let two weeks pass so because it starts in 2021-06-13 we will start in 2021-06-27
+#We have fully vaccinated data since 2020-28-12 but is not until the week that ends in 2021-01-24 in which there are more than 5000 individuals. We have to take one week more to incorporate the lag (we start in the week that ends in the 2021-01-31). the 3th and 4th wave will end in the sunday that begins the 5th wave (2021-06-13). Also for the 5th wave we will let one week pass so because it starts in 2021-06-13 we will start in the week that starts in 2021-06-20 and ends in 2021-06-27
 
 ndat <- rbind(
   tibble(
     data_min = ymd(c("2021-01-31", "2021-01-31", "2021-06-27")),
-    data_max = ymd(c("2021-11-02", "2021-06-13", "2021-11-02")),
+    data_max = ymd(c("2021-11-02", "2021-06-14", "2021-11-02")),
     wave = c("All", "3rd-4th wave", "5th wave"),
     edat = FALSE
   ),
   tibble(
     data_min = ymd(c("2021-01-31")),
-    data_max = ymd(c("2021-06-13")),
+    data_max = ymd(c("2021-06-14")),
     wave = c("3rd-4th wave"),
     edat = TRUE
   )
@@ -1722,8 +1774,38 @@ ndat_sae_70 <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("hosp
     })
   )
 
+ndat_sae_70_raw <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("hosp"), effect = c("sir", "sir2"))) %>% 
+  mutate_if(is.factor, as.character) %>% 
+  mutate(
+    res = pmap(list(period, outcomes, effect), function(x, y, z) {
+      
+      sdf <- ndat %>% 
+        filter(wave == x, edat)
+      
+      inla_mod_vac(df = sdf$df[[1]], outcome = y, effect = z, vac=FALSE, covar=FALSE)
+      
+    })
+  )
+
 #Save the model
 save(ndat_sae_70, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70.Rda"))
+save(ndat_sae_70_raw, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_raw.Rda"))
+
+#Population aged over 70 with 2-weeks lags
+ndat_sae_70_lag2 <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("hosp"), effect = c("sir", "sir2"))) %>% 
+  mutate_if(is.factor, as.character) %>% 
+  mutate(
+    res = pmap(list(period, outcomes, effect), function(x, y, z) {
+      
+      sdf <- ndat %>% 
+        filter(wave == x, edat)
+      
+      inla_mod_vac(df = sdf$df[[1]], outcome = y, effect = z, lag = 2)
+      
+    })
+  )
+
+save(ndat_sae_70_lag2, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_lag2.Rda"))
 
 #Let's estimate the raw model:
 ndat_sae_raw <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave"), outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>% 
