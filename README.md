@@ -1,6 +1,6 @@
 # Bayesian spatio-temporal analysis of COVID-19 in Catalonia
 
-In this repository can be found all of the work related to my Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Cristian Tebé and Laura Igual. 
+In this repository can be found all of the work related to my Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. 
 
 ## Abstract
 
