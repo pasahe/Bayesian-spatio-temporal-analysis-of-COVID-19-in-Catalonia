@@ -13,7 +13,7 @@ In this study, we model the COVID-19 pandemic in the different basic health area
 - *MakingData.R*: import and clean the data from the official open data catalogue of the Government of Catalonia (https://analisi.transparenciacatalunya.cat/en/).
 - *SAE.R*: estimation of the models with INLA.
 
-All of the code is done using _R_ software version 4.3.0. Mainly the _R_ packages _dplyr_ and _purrr_ have been used for data management and _R-INLA_ for estimating the models with INLA.
+All of the code is done using _R_ software version 4.3.0. Mainly, the _R_ packages _dplyr_ and _purrr_ have been used for data management and _R-INLA_ for estimating the models with INLA.
 
 ### Notebook
 
