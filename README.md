@@ -1,6 +1,6 @@
 # Bayesian spatio-temporal analysis of COVID-19 in Catalonia
 
-In this repository can be found all of the work related to my Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. 
+In this repository can be found all of the work related to the Pau Satorra's Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. 
 
 ## Abstract
 
@@ -21,6 +21,10 @@ All of the code is done using _R_ software version 4.3.0. Mainly, the _R_ packag
 - *Analysis_Spatial_Temporal_Vaccination*: contains the description of the vaccination data and the results of the estimated spatio-temporal model including the vaccination effect.
 
 For each notebook, the R-markdown file with the code for elaborating the notebook is included together with the resulting html notebook.
+
+### Shiny application
+
+In the COVIDCAT_Evo folder we can find all of the code for developing the R shiny application https://brui.shinyapps.io/covidcat_evo/, which visualizes the results of the study.
 
 
 
