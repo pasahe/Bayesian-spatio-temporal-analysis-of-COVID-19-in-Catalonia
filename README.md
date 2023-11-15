@@ -24,7 +24,7 @@ For each notebook, the R-markdown file with the code for elaborating the noteboo
 
 ### Shiny application
 
-In the COVIDCAT_Evo folder we can find all of the code for developing the R shiny application https://brui.shinyapps.io/covidcat_evo/, which visualizes the results of the study.
+In the COVIDCAT_Evo folder we can find all of the code for developing the R shiny application (https://brui.shinyapps.io/covidcat_evo/), which visualizes the results of the study.
 
 
 
