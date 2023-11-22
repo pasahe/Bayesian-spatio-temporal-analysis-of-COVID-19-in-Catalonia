@@ -1,32 +1,5 @@
-#SAE with INLA tutorial
-# http://www.paulamoraga.com/tutorial-areal-data-es/
-#ECDC country dashboard
-# https://www.ecdc.europa.eu/en/covid-19/country-overviews
-#ECDC guidelines for thresholds
-# https://www.ecdc.europa.eu/sites/default/files/documents/RRA-15th-update-June%202021.pdf
-#WHO guidelines (covid-19 indicator thresholds)
-# https://www.who.int/publications/i/item/considerations-in-adjusting-public-health-and-social-measures-in-the-context-of-covid-19-interim-guidance
-#UK dashboard
-# https://coronavirus.data.gov.uk/
-#CAT dashboard
-# https://dadescovid.cat/
-#PandemonCAT
-# https://www.researchprojects.es/en/apps/pandemoncat
-#Government interventions and control policies to contain the first COVID-19 outbreak: An analysis of evidence
-# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9996153/
-
-#We will take a period of 7 days for the cumulative window period as we would like to show the evolution in every week. 7 days is the minimum we can take as for the hospitalization it's already given in a weekly basis. Also presenting the results weekly we have more random fluctuation so the need of a sae estimation method gains sense
-
-#For the cases we will use the case incidence measured as new confirmed cases per 100k population per week
-#For the hospitalization we will use the hospitalization rate measured as New COVID- 19 hospitalizations per 100k population per week
-
-#WHO indicated about these indicators:
-#Consider averaging over a two-week period to minimize the effect of random fluctuations.
-#Considering the smooth SAE we will guarantee that the effect of random fluctuations is not present.
-
-#For the vaccination we will use the cumulated total covid-19 vaccine doses administred per 100 people updated every week.
-
-
+#File for estimating the different models and save the results
+#Compile to generate the data that will go in the 2_Analysis folder. These data is not found in github because of the high memory weight of these files. Only dat.R is found, which contains the necessary information to perform the models.
 rm(list=ls())
 
 library(dplyr)
@@ -39,28 +12,22 @@ library(purrr)
 library(zoo)
 library(tibble)
 library(tsibble)
-library(Matrix) #Sparse matrices
-# setwd('P:/TFM')
-setwd('C:\\Users\\psatorra\\Documents\\TFM')
-
-dades <- "./2_Dades/1_Originals"
-dades_ana <- "./2_Dades/2_Analisi"
-codi <- "./3_CodiR"
+library(Matrix) 
 
 #---Load data----
-load(file = file.path(dades_ana, "pob_abs.Rda"))
-load(file = file.path(dades_ana, "dat_cas.Rda"))
-load(file = file.path(dades_ana, "dat_edat.Rda"))
-load(file = file.path(dades_ana, "dat_hosp.Rda"))
-load(file = file.path(dades_ana, "shapefileT.Rda"))
+load(file = "Data/1_Processed/pob_abs.Rda")
+load(file = "Data/1_Processed/dat_cas.Rda")
+load(file = "Data/1_Processed/dat_edat.Rda")
+load(file = "Data/1_Processed/dat_hosp.Rda")
+load(file = "Data/1_Processed/shapefileT.Rda")
 
 #Load covariates
-load(file = file.path(dades_ana, "Covariates/dat_covar.Rda"))
+load(file = "Data/1_Processed/dat_covar.Rda")
 #Les dades de mobilitat no les carregarem perquè són mensuals (no tenim suficient variabilitat...)
 #Les dades de restriccions les hauríem de processar abans d'incorporar-les com a covariants
 
 #Load vacccination data
-load(file = file.path(dades_ana, "dat_vac.Rda"))
+load(file = "Data/1_Processed/dat_vac.Rda")
 
 #Population in the total of Catalonia by sex and age (to calculate the standarized incidence of cases). Because the age aggrupation changes we have to calculate the population by each age aggrupation
 Tpob_cas <- pob_abs %>% 
@@ -86,12 +53,6 @@ sf::sf_use_s2(FALSE)
 
 #Furthermore, I think that we would have to calculate the RR only for the cases and hospitalization as there is very few variability on fully vaccination percentages and thus it's not necessary to calculate the RR. 
 
-#Està bastant ben explicat la motivació de bym:
-# https://www.sciencedirect.com/science/article/pii/S0047259X12000589
-
-#Està molt ben explicat el bym:
-# http://www.stat.columbia.edu/~gelman/research/published/bym_article_SSTEproof.pdf
-
 #Model: y_i ~ Poiss(n_i*theta_i); log(theta_i) ~ beta0 + b_i
 # The random effect b_i follows a BYM model that includes an ICAR (Intrinsic Conditional Auto-Regressive model) component for spatial auto-correlation and an ordinary random-effect component for non-spatial heterogenity:
 #(Specific formulation from https://sci-hub.st/10.1002/sim.4780142111)
@@ -103,7 +64,7 @@ sf::sf_use_s2(FALSE)
 #But this distribution (the inverse-gamma, i.e gamma for the 1/X) is not recommended (Andrew Gelman, http://www.stat.columbia.edu/~gelman/research/published/taumain.pdf), because when the parameter is estimated to be closed to zero the resulting inferences will be sensitive. It's recommended a standard uniform distribution that we can define, by:
 # sdunif = "expression: logdens=log(0.5)-log_precision/2; return(logdens);"
 sdunif = "expression: logdens=-log_precision/2; return(logdens);"
-#Adin Urtasun, https://academica-e.unavarra.es/bitstream/handle/2454/27572/Adin%20Urtasun%20Tesis%20MA.pdf?sequence=1&isAllowed=y
+#Aritz Adin, https://academica-e.unavarra.es/bitstream/handle/2454/27572/Adin%20Urtasun%20Tesis%20MA.pdf?sequence=1&isAllowed=y
 
 #BYM2: https://arxiv.org/pdf/1601.01180.pdf, implementation also in https://www.paulamoraga.com/book-geospatial/sec-arealdatatheory.html
 # In the classical BYM (Besag, York and Mollié) model, the spatially structured component cannot be seen independently from the unstructured component. This makes prior definitions for the hyperparameters of the two random effects challenging. BYM2 leads to improved parameter control as the hyperparameters can be seen independently from each other, defining a model that depends on two hyperparameters tau_b (pure overdispersion) and phi (spatially structured correlation - proportion of the marginal variance explained by the structured effect-) that can be interpretable.
@@ -541,9 +502,9 @@ res_sp <- ndat_sae %>%
     ~gsub("\\_$", "", .x)
   )
 
-save(sp_dic_waic, file = file.path(dades_ana, "Spatial/sp_dic_waic.Rda"))
-save(bym2_hp, file = file.path(dades_ana, "Spatial/bym2_hp.Rda"))
-save(res_sp, file = file.path(dades_ana, "Spatial/res_sp.Rda"))
+save(sp_dic_waic, file = "Data/2_Analysed/Spatial/sp_dic_waic.Rda")
+save(bym2_hp, file = "Data/2_Analysed/Spatial/bym2_hp.Rda")
+save(res_sp, file = "Data/2_Analysed/Spatial/res_sp.Rda")
 
 #----------- Spatio-temporal models --------------
 # https://sci-hub.st/10.1002/1097-0258%2820000915/30%2919%3A17/18%3C2555%3A%3AAID-SIM587%3E3.0.CO%3B2-%23
@@ -606,7 +567,7 @@ dat <- dat %>%
   rename(N = N.x)
 
 #Save data
-save(dat, file = file.path(dades_ana, "dat.Rda"))
+save(dat, file = "Data/dat.Rda")
 
 # https://sci-hub.st/10.1002/1097-0258%2820000915/30%2919%3A17/18%3C2555%3A%3AAID-SIM587%3E3.0.CO%3B2-%23
 # In practice, temporal trends are typically strong for most diseases so the unstructured temporal effect can be neglected. 
@@ -950,7 +911,7 @@ st_dic_waic_base <- ndat_sae_st_base %>%
   dplyr::select(base, effect, dic_cas, waic_cas, dic_hosp, waic_hosp)
 
 #Save the results with the hyperparameters of the different base model specifications
-save(st_dic_waic_base, file = file.path(dades_ana, "SpatioTemporal/st_dic_waic_base.Rda"))
+save(st_dic_waic_base, file = "Data/2_Analysed/SpatioTemporal/st_dic_waic_base.Rda")
 
 #SIR2 
 
@@ -1020,7 +981,7 @@ st_dic_waic_sir2 <- ndat_sae_st_sir2 %>%
 #Type II interaction is the best model for the cases. For the hospitalization, the type IV is the best model but it doesn't improve a lot the II one, so we will stick with this one as well for simplicity and coherence with the other outcome. With this interaction, we're assuming a random walk of order 1 across time for each area independently from all the other areas (every area has its own random walk). So, we're saying that temporal trends are different from area to area but there is not any structure in space (type IV). The same type II interaction as the best one chosen from the Toronto covid-19 data (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9172088/).
 
 #Save the results with the hyperparameters
-save(st_dic_waic_sir2, file = file.path(dades_ana, "SpatioTemporal/st_dic_waic_sir2.Rda"))
+save(st_dic_waic_sir2, file = "Data/2_Analysed/SpatioTemporal/st_dic_waic_sir2.Rda")
 
 #Let's do the same for the SIR calculated in each week
 Sys.time() - t0
@@ -1090,7 +1051,7 @@ st_dic_waic <- ndat_sae_st %>%
 #Type II interaction is the best model for the cases. For the hospitalization, the type IV is the best model but it doesn't improve a lot the II one, so we will stick with this one as well for simplicity and coherence with the other outcome. With this interaction, we're assuming a random walk of order 1 across time for each area independently from all the other areas (every area has its own random walk). So, we're saying that temporal trends are different from area to area but there is not any structure in space (type IV). The same type II interaction as the best one chosen from the Toronto covid-19 data (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9172088/).
 
 #Save the results with the hyperparameters
-save(st_dic_waic, file = file.path(dades_ana, "SpatioTemporal/st_dic_waic.Rda"))
+save(st_dic_waic, file = "Data/2_Analysed/SpatioTemporal/st_dic_waic.Rda")
 
 #Let's fit the type II model without constraints to see the change
 #We will pass the defined parameters to the function directly
@@ -1178,28 +1139,6 @@ inla_mod_II <- function(df, outcome = "cas", effect = "sir", constraints = TRUE,
 
 }
 
-# # #Model without taking in account the temporal effect for cases and hospitalizations
-# ndat_sae_II_notemp <- tibble(expand.grid(outcomes = c("cas", "hosp"), effect = c("sir"))) %>%
-#   mutate_if(is.factor, as.character) %>%
-#   mutate(
-#     res = map2(outcomes, effect, ~inla_mod_II(dat, outcome = .x, effect = .y, temp = FALSE))
-#   )
-# 
-# save(ndat_sae_II_notemp, file = file.path(dades_ana, "SpatioTemporal/ndat_sae_II_notemp.Rda"))
-
-#We have already compiled this model
-# ndat_sae_II <- tibble(expand.grid(outcomes = c("cas", "hosp"), effect = c("sir"))) %>% 
-#   mutate_if(is.factor, as.character) %>% 
-#   mutate(
-#     res = map2(outcomes, effect, ~inla_mod_II(dat, outcome = .x, effect = .y))
-#   )
-# ndat_sae_II <- ndat_sae_st %>% 
-#   filter(interaction == "II") %>% 
-#   dplyr::select(-interaction, -dic, -waic) %>% 
-#   tibble::add_column(
-#     effect = "sir", .before = "res"
-#   )
-
 #For the expected cases for the whole period
 ndat_sae_II <- tibble(expand.grid(outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>%
   mutate_if(is.factor, as.character) %>%
@@ -1207,19 +1146,8 @@ ndat_sae_II <- tibble(expand.grid(outcomes = c("cas", "hosp"), effect = c("sir",
     res = map2(outcomes, effect, ~inla_mod_II(dat, outcome = .x, effect = .y))
   )
 
-# ndat_sae_II <- rbind(ndat_sae_II, ndat_sae_II_sir2)
-
 #Save the models
-save(ndat_sae_II, file = file.path(dades_ana, "SpatioTemporal/ndat_sae_II.Rda"))
-
-#No constraints: to see the bad performance if we don't impose any constraints. We expect to see IRR that aren't around 1 in the different effects that don't have constraints. For example, if the condition to sum up to zero for all spatial areas have not been set then it's obvious that the effects will not be around the 1 and that other type of effect can "steal" the effect of another type.
-
-# ndat_sae_nocons <- tibble(outcomes = "cas", effect = c("sir", "sir2")) %>% 
-#   mutate(
-#     res = map(effect, ~inla_mod_II(df = dat, outcome = "cas", effect = .x, constraints = FALSE))
-#   )
-# 
-# save(ndat_sae_nocons, file = file.path(dades_ana, "SpatioTemporal/ndat_sae_nocons.Rda"))
+save(ndat_sae_II, file = "Data/2_Analysed/SpatioTemporal/ndat_sae_II.Rda")
 
 #-------Include spatial covariates in the spatiotemporal model-------------
 
@@ -1311,6 +1239,7 @@ inla_mod_covar <- function(df, outcome = "cas", effect = "sir", var = "si") {
   
 }
 
+
 res_sae_raw <- ndat_sae_II %>% 
   mutate(
     dic = map_dbl(res, ~.x$dic$dic),
@@ -1350,6 +1279,7 @@ res_sae_raw <- ndat_sae_II %>%
     )
   ) %>% 
   dplyr::select(-res)
+
 
 ndat_sae_urban <- tibble(expand.grid(outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>% 
   mutate_if(is.factor, as.character) %>% 
@@ -1541,19 +1471,19 @@ res_sae_si_comp <- ndat_sae_si_comp %>%
   ) %>% 
   dplyr::select(-res)
 
-#Save the models
-# save(res_sae_raw, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_raw.Rda"))
-save(ndat_sae_urban, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_urban.Rda"))
-save(res_sae_urban, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_urban.Rda"))
+save(res_sae_raw, file = "Data/2_Analysed/Covariates/res_sae_raw.Rda")
 
-save(ndat_sae_si, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si.Rda"))
-save(res_sae_si, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si.Rda"))
+save(ndat_sae_urban, file = "Data/2_Analysed/Covariates/ndat_sae_urban.Rda")
+save(res_sae_urban, file = "Data/2_Analysed/Covariates/res_sae_urban.Rda")
 
-save(ndat_sae_int, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_int.Rda"))
-save(res_sae_int, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_int.Rda"))
+save(ndat_sae_si, file = "Data/2_Analysed/Covariates/ndat_sae_si.Rda")
+save(res_sae_si, file = "Data/2_Analysed/Covariates/res_sae_si.Rda")
 
-save(ndat_sae_si_comp, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si_comp.Rda"))
-save(res_sae_si_comp, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_comp.Rda"))
+save(ndat_sae_int, file = "Data/2_Analysed/Covariates/ndat_sae_int.Rda")
+save(res_sae_int, file = "Data/2_Analysed/Covariates/res_sae_int.Rda")
+
+save(ndat_sae_si_comp, file = "Data/2_Analysed/Covariates/ndat_sae_si_comp.Rda")
+save(res_sae_si_comp, file = "Data/2_Analysed/Covariates/res_sae_si_comp.Rda")
 
 #Quadratic effect of the Socio-economic index on cases
 ndat_sae_si_quad <- tibble(expand.grid(outcomes = c("cas"), effect = c("sir2"))) %>% 
@@ -1602,8 +1532,8 @@ res_sae_si_quad <- ndat_sae_si_quad %>%
   ) %>% 
   dplyr::select(-res)
 
-save(ndat_sae_si_quad, file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si_quad.Rda"))
-save(res_sae_si_quad, file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_quad.Rda"))
+save(ndat_sae_si_quad, file = "Data/2_Analysed/Covariates/ndat_sae_si_quad.Rda")
+save(res_sae_si_quad, file = "Data/2_Analysed/Covariates/res_sae_si_quad.Rda")
 
 #--------Effect of vaccination---------
 #We include the cumulative fully vaccination percentage because of the argument given in https://stats.stackexchange.com/questions/425055/time-varying-covariates-in-longitudinal-mixed-effect-models
@@ -1679,6 +1609,35 @@ inla_mod_vac <- function(df, outcome = "cas", effect = "sir", lag = 1, vac = TRU
   
 }
 
+#All observed vaccinated data (for shiny app COVIDCAT_EVO)
+ndat_vac <- tibble(data_min = ymd("2021-01-31"),
+               data_max = ymd("2022-07-24")) %>% 
+  mutate(
+    df = map2(data_min, data_max, function(x, y) {
+      range_data <- seq(x, y, by = 1)
+      
+      sdat <- tibble(data = range_data) %>% 
+        mutate(
+          wday = wday(data)
+        ) %>% 
+        #Filter sundays
+        filter(wday == 1) %>% 
+        dplyr::select(-wday) %>% 
+        mutate(
+          obs = map(data, ~res_out(.x))
+        ) %>% 
+        unnest(obs)
+    })
+  ) %>% 
+  dplyr::select(df) %>% 
+  unnest(df) %>% 
+  mutate(
+    rate_vac = rate_vac*100
+  ) %>% 
+  dplyr::select(data, abs, n_vac, N, rate_vac) 
+
+save(ndat_vac, file = "Data/2_Analysed/Vaccination/ndat_vac.Rda")
+
 #We have fully vaccinated data since 2020-28-12 but is not until the week that ends in 2021-01-24 in which there are more than 5000 individuals. We have to take one week more to incorporate the lag (we start in the week that ends in the 2021-01-31). the 3th and 4th wave will end in the sunday that begins the 5th wave (2021-06-13). Also for the 5th wave we will let one week pass so because it starts in 2021-06-13 we will start in the week that starts in 2021-06-20 and ends in 2021-06-27
 
 ndat <- rbind(
@@ -1742,7 +1701,8 @@ dat_70 <- ndat %>%
   filter(wave == "3rd-4th wave", edat) %>% 
   pull(df)
 dat_70 <- dat_70[[1]]
-save(dat_70, file = file.path(dades_ana, "dat_70.Rda"))
+
+save(dat_70, file = "Data/dat_70.Rda")
 
 ndat_sae_vac <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave"), outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>% 
   mutate_if(is.factor, as.character) %>% 
@@ -1758,7 +1718,7 @@ ndat_sae_vac <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave")
   )
 
 #Save the model
-save(ndat_sae_vac, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac.Rda"))
+save(ndat_sae_vac, file = "Data/2_Analysed/Vaccination/ndat_sae_vac.Rda")
 
 #Let's filter >= 70 years old. We will only calculate it for the 3rd-4th wave that is when the majority of the aged >=70 years old are fully vaccinated.
 ndat_sae_70 <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("hosp"), effect = c("sir", "sir2"))) %>% 
@@ -1788,8 +1748,8 @@ ndat_sae_70_raw <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("
   )
 
 #Save the model
-save(ndat_sae_70, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70.Rda"))
-save(ndat_sae_70_raw, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_raw.Rda"))
+save(ndat_sae_70, file = "Data/2_Analysed/Vaccination/ndat_sae_70.Rda")
+save(ndat_sae_70_raw, file = "Data/2_Analysed/Vaccination/ndat_sae_70_raw.Rda")
 
 #Population aged over 70 with 2-weeks lags
 ndat_sae_70_lag2 <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c("hosp"), effect = c("sir", "sir2"))) %>% 
@@ -1805,7 +1765,7 @@ ndat_sae_70_lag2 <- tibble(expand.grid(period = c("3rd-4th wave"), outcomes = c(
     })
   )
 
-save(ndat_sae_70_lag2, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_lag2.Rda"))
+save(ndat_sae_70_lag2, file = "Data/2_Analysed/Vaccination/ndat_sae_70_lag2.Rda")
 
 #Let's estimate the raw model:
 ndat_sae_raw <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave"), outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>% 
@@ -1822,7 +1782,7 @@ ndat_sae_raw <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave")
   )
 
 #Save the model
-save(ndat_sae_raw, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_raw.Rda"))
+save(ndat_sae_raw, file = "Data/2_Analysed/Vaccination/ndat_sae_raw.Rda")
 
 ndat_sae_vac_nocovar <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave"), outcomes = c("hosp"), effect = c("sir", "sir2"))) %>%
   mutate_if(is.factor, as.character) %>%
@@ -1838,7 +1798,7 @@ ndat_sae_vac_nocovar <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5t
   )
 
 #Save the model
-save(ndat_sae_vac_nocovar, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_nocovar.Rda"))
+save(ndat_sae_vac_nocovar, file = "Data/2_Analysed/Vaccination/ndat_sae_vac_nocovar.Rda")
 
 
 ndat_sae_vac_lag2 <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave"), outcomes = c("cas", "hosp"), effect = c("sir", "sir2"))) %>% 
@@ -1854,77 +1814,4 @@ ndat_sae_vac_lag2 <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th w
     })
   )
 
-save(ndat_sae_vac_lag2, file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_lag2.Rda"))
-
-# ndat_sae_vac_sir <- tibble(expand.grid(period = c("All", "3rd-4th wave", "5th wave", "6th wave"), outcomes = c("hosp"), effect = c("sir"))) %>% 
-#   mutate_if(is.factor, as.character) %>% 
-#   mutate(
-#     res = map2(period, outcomes, function(x, y) {
-#       if(x == "3rd-4th wave") {
-#         inla_mod_vac(df = sdat1, outcome = y, effect = "sir", sir = TRUE)
-#       } else if(x == "5th wave"){
-#         inla_mod_vac(df = sdat2, outcome = y, effect = "sir", sir = TRUE)
-#       } else if(x == "6th wave") {
-#         inla_mod_vac(df = sdat3, outcome = y, effect = "sir", sir = TRUE)
-#       } else {
-#         inla_mod_vac(df = sdat, outcome = y, effect = "sir", sir = TRUE)
-#       }
-#     })
-#   )
-# 
-# save(ndat_sae_vac_sir, file = file.path(dades_ana, "SpatioTemporal/ndat_sae_vac_sir.Rda"))
-
-#OLD: we previously ran spatial models for every date with a BYM model and processed the data to add it to the shiny app
-#Unnest and transform the data:
-#We will multiply by 100k cases and hospitalization rates. We will multiply by 100 the second dose vaccination rate to have the percentage. 
-#We will create a categoric version of the smooth rates in order to paint the maps. We will look at the quantiles that the variables take and also on literature.
-#For the 7-day case rate the UK government takes the following breaks: 0-10, 10-50, 50-100, 100-200, 200-400, 400-800, 800-1600, +1600. We will use the same ones. In the CAT dashboard the following thresholds are used:0-15, 15-25, 25-50, 50-75, 75-100, 100-200, 200-300, 300-400, >400
-#For the 7-day hospitalization rate we take a mix of the ecdc and who thresholds (ecdc <10, 10 - <25, 25 - <50, ≥50; who <5, 5 - <10, 10 - <30, 30+) that define in the guidelines: 0-5, 5-10, 10-30, 30-50, >50. 10-30 will be break into 10-15, 15-20, 20-25, 25-30 because our data demands it.
-#For the percentage of second doses we can use a simple categorization of a percentage similar to the one used in ecdc (0-25, 25-50, 50-60, 60-70, 70-80, 80-90, >90) that is: 0-10, 10-25, 25-50, 50-60, 60-70, 70-80,80-90, >90
-#For the total vaccine doses x 100 the world in data uses the following breaks: 0-50, 50-100, 100-150, 150-200, 200-250, 250-300, 300-350, 350-400 (https://ourworldindata.org/grapher/covid-vaccination-doses-per-capita?tab=map&time=2021-08-28). They have more doses because the period is longer.
-#The WHO uses the following braks for total vaccine doses x 100 (https://covid19.who.int/): 0-20, 20-40, 40-60, 60-70, 70-100, +100
-#We will use a combination of the two: 0-20, 20-40, 40-60, 60-80, 80-100, 100-150, 150-200, +200
-# dat_sae <- ndat_sae %>%
-#   unnest(df) %>% 
-#   mutate_at(vars(contains("rate_cas"), contains("rate_hosp")), ~.x*100000) %>% 
-#   mutate_at(vars(contains("rate_vac")), ~.x*100) %>% 
-#   mutate(
-#     srate_cas_cat = case_when(
-#       srate_cas < 10 ~ 0,
-#       srate_cas < 50 ~ 1,
-#       srate_cas < 100 ~ 2,
-#       srate_cas < 200 ~ 3,
-#       srate_cas < 400 ~ 4,
-#       srate_cas < 800 ~ 5,
-#       srate_cas < 1600 ~ 6,
-#       TRUE ~ 7
-#     ),
-#     srate_cas_cat = factor(srate_cas_cat, levels = 0:7, labels = c("0-10", "10-50", "50-100", "100-200", "200-400", "400-800", "800-1600", "+1600")),
-#     srate_hosp_cat = case_when(
-#       srate_hosp < 5 ~ 0,
-#       srate_hosp < 10 ~ 1,
-#       srate_hosp < 15 ~ 2,
-#       srate_hosp < 20 ~ 3,
-#       srate_hosp < 25 ~ 4,
-#       srate_hosp < 30 ~ 5,
-#       srate_hosp < 50 ~ 6,
-#       TRUE ~ 7
-#     ),
-#     srate_hosp_cat = factor(srate_hosp_cat, levels = 0:7, labels = c("0-5", "5-10", "10-15", "15-20", "20-25", "25-30", "30-50", ">50")),
-#     srate_vac_cat = case_when(
-#       srate_vac < 10 ~ 0,
-#       srate_vac < 25 ~ 1,
-#       srate_vac < 50 ~ 2,
-#       srate_vac < 60 ~ 3,
-#       srate_vac < 70 ~ 4,
-#       srate_vac < 80 ~ 5,
-#       srate_vac < 90 ~ 6,
-#       TRUE ~ 7
-#     ),
-#     srate_vac_cat = factor(srate_vac_cat, levels = 0:7, labels = c("0-10", "10-25", "25-50", "50-60", "60-70", "70-80", "80-90", "+90"))
-#   )
-# 
-# save(ndat_sae, file = file.path(dades_ana, "ndat_sae.Rda"))
-# save(dat_sae, file = file.path(dades_ana, "dat_sae.Rda"))
-# save(dat_sae, file = "5_Productes/COVIDCAT_Evo/dat_sae.Rda")
-
+save(ndat_sae_vac_lag2, file = "Data/2_Analysed/Vaccination/ndat_sae_vac_lag2.Rda")

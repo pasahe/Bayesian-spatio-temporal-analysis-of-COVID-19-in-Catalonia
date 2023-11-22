@@ -7,7 +7,7 @@ knit: (function(inputFile, encoding) {
  
   rmarkdown::render(inputFile,
       encoding=encoding, 
-      output_file=file.path(dirname('C:\\Users\\psatorra\\Documents\\TFM'),'TFM/5_Productes/Analysis_Spatial_Temporal_Vaccination.html')) })
+      output_file="Reports/Analysis_Spatial_Temporal_Vaccination.html") })
 output:
   html_document:
     toc: true
@@ -51,43 +51,40 @@ tab_nums <- captioner(prefix = 'Table')
 citef <- pryr::partial(fig_nums, display = 'cite')
 citet <- pryr::partial(tab_nums, display = 'cite')
 ###############
-# setwd('P:/TFM')
-setwd('C:\\Users\\psatorra\\Documents\\TFM')
-dades_ana <- '2_Dades/2_Analisi'
 
 #Load data by ABS and date
-load(file.path(dades_ana, "dat.Rda"))
-#dat for the population 
-load(file.path(dades_ana, "dat_70.Rda"))
+load("Data/dat.Rda")
 
 #Load all incidences from the global of CAT
-load(file.path(dades_ana, "dat_cat.Rda"))
+load("Data/1_Processed/dat_cat.Rda")
 
 #Load all incidences from each sanitary regions
-load(file.path(dades_ana, "dat_rs.Rda"))
+load("Data/1_Processed/dat_rs.Rda")
 
 #Load shapefileT
-load(file.path(dades_ana, "shapefileT.Rda"))
+load("Data/1_Processed/shapefileT.Rda")
 
 #Load population
-load(file.path(dades_ana, "pob_abs.Rda"))
+load("Data/1_Processed/pob_abs.Rda")
 
 #Load cases for each outcome
-load(file.path(dades_ana, "dat_edat.Rda"))
-load(file.path(dades_ana, "dat_hosp.Rda"))
-load(file.path(dades_ana, "dat_vac.Rda"))
+load("Data/1_Processed/dat_edat.Rda")
+load("Data/1_Processed/dat_hosp.Rda")
+load("Data/1_Processed/dat_vac.Rda")
 
 #Load covariates
-load(file = file.path(dades_ana, "Covariates/dat_covar.Rda"))
+load("Data/1_Processed/dat_covar.Rda")
 
+#We need to compile SAE.R to have the 'dat_70' data and data in the '2_Analysed' folder
+load("Data/dat_70.Rda")
 #Vaccination effect
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_raw.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_lag2.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_raw.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_70_lag2.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Vaccination/ndat_sae_vac_nocovar.Rda"))
+load("Data/2_Analysed/Vaccination/ndat_sae_raw.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_vac.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_vac_lag2.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_70.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_70_raw.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_70_lag2.Rda")
+load("Data/2_Analysed/Vaccination/ndat_sae_vac_nocovar.Rda")
 ```
 
 # Description
@@ -150,16 +147,16 @@ ggplot(data = sdat_cat, aes(x = data, y = rate)) +
   geom_vline(aes(xintercept = xint), linetype = "dashed") +
   theme_classic() + 
   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-  ylab("Weekly vaccination rate (x100k pop.)")
+  ylab("Weekly full vaccination rate (x100,000 pop.)")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\evo_vac_weekly.png)",width = 4000,height = 1800,res = 600)
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\evo_vac_weekly.png)",width = 4000,height = 2000,res = 600)
 # ggplot(data = sdat_cat, aes(x = data, y = rate)) +
 #   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
 #   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
 #   geom_vline(aes(xintercept = xint), linetype = "dashed") +
-#   theme_classic() + 
+#   theme_classic() +
 #   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-#   ylab("Weekly vaccination rate (x100k pop.)")
+#   ylab("Weekly full vaccination rate (x100,000 pop.)")
 # dev.off()
 ```
 
@@ -174,16 +171,16 @@ ggplot(data = sdat_cat, aes(x = data, y = Trate)) +
   geom_vline(aes(xintercept = xint), linetype = "dashed") +
   theme_classic() + 
   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-  ylab("Cumulative vaccination percentage (%)")
+  ylab("Cumulative full vaccination percentage (%)")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\evo_vac_cum.png)",width = 4000,height = 1800,res = 600)
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\evo_vac_cum.png)",width = 4000,height = 2000,res = 600)
 # ggplot(data = sdat_cat, aes(x = data, y = Trate)) +
 #   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
 #   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
 #   geom_vline(aes(xintercept = xint), linetype = "dashed") +
-#   theme_classic() + 
+#   theme_classic() +
 #   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-#   ylab("Cumulative vaccination percentage (%)")
+#   ylab("Cumulative full vaccination percentage (%)")
 # dev.off()
 ```
 
@@ -2367,6 +2364,14 @@ kable(taula) %>%
 #   pack_rows(
 #     "Random effects", 5, 8
 #   )
+# #Presentation UB
+# taula <- taula[1:4,]
+#
+# t <- kable(taula, caption = "RR (CI95%) of the vaccination and the adjusted spatial covariates") %>%
+#     kable_styling(bootstrap_options = c("striped", "hover")) %>%
+#     row_spec(4, background = "#4A90E2", color = "white")
+# raw_code <- paste0(as.character(t), collapse = "\n")
+# cat(raw_code)
 ```
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
@@ -3106,59 +3111,68 @@ kable(taula) %>%
 
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
-# taula <- sdat_sae %>% 
-#   filter(model %in% c("Vaccination + Covariates")) %>% 
-#   mutate(
-#     hp = map2(model, res, function(x, y) {
-#       est <- summary(y)$fixed %>% 
-#         as.data.frame() %>% 
-#         mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>% 
-#         dplyr::select(est) %>% 
-#         rownames_to_column(var = "var") %>% 
-#         mutate(
-#           var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Full vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Full vaccination (2-week lag)"))
-#         ) %>% 
-#         mutate(
-#           order = 1
-#         )
-#       
-#       hp <- y$summary.hyperpar %>% 
-#         as.data.frame() %>% 
-#         mutate(
-#           id = row_number(),
-#           est = case_when(
-#             id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
-#             TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
-#           )
-#         ) %>% 
-#         dplyr::select(est) %>% 
-#         rownames_to_column(var = "var") %>% 
-#         mutate(
-#           order = 2
-#         )
-# 
-#       rbind(est, hp)
-#        
-#     })
-#   ) %>% 
-#   dplyr::select(outcomes, hp) %>% 
-#   unnest(hp) %>% 
-#   pivot_wider(names_from = "outcomes", values_from = c("est")) %>% 
-#   arrange(order) %>% 
-#   dplyr::select(-order)
-# 
-# taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
-# 
-# names(taula) <- c("", "Cases", "Hospitalisations")
-# 
-# kable(taula, caption = "Estimated fixed effects and random effects hyperparameters for the spatio-temporal with spatial covariates and vaccination (1-week lag) model for cases and hospitalisations.", format = "latex") %>% 
-#   kable_styling(bootstrap_options = c("striped", "hover")) %>% 
-#   pack_rows(
-#     "Fixed effects", 1, 4
-#   ) %>% 
-#   pack_rows(
-#     "Random effects", 5, 8
-#   )
+taula <- sdat_sae %>%
+  filter(model %in% c("Vaccination + Covariates")) %>%
+  mutate(
+    hp = map2(model, res, function(x, y) {
+      est <- summary(y)$fixed %>%
+        as.data.frame() %>%
+        mutate(est = str_glue("{round(exp(mean), 2)} ({round(exp(`0.025quant`), 2)}, {round(exp(`0.975quant`), 2)})")) %>%
+        dplyr::select(est) %>%
+        rownames_to_column(var = "var") %>%
+        mutate(
+          var = factor(var, levels = c("(Intercept)", "lag_rate_vac1", "urbanUrban", "isc", "lag_rate_vac2"), labels = c("(Intercept)", "Full vaccination (1-week lag)", "Urban vs Rural", "Socioeconomic Index (SI)", "Full vaccination (2-week lag)"))
+        ) %>%
+        mutate(
+          order = 1
+        )
+
+      hp <- y$summary.hyperpar %>%
+        as.data.frame() %>%
+        mutate(
+          id = row_number(),
+          est = case_when(
+            id == 2 ~ str_glue("{round(mean, 2)} ({round(`0.025quant`, 2)}, {round(`0.975quant`, 2)})"),
+            TRUE ~ str_glue("{round(1/sqrt(mean), 2)} ({round(1/sqrt(`0.025quant`), 2)}, {round(1/sqrt(`0.975quant`), 2)})")
+          )
+        ) %>%
+        dplyr::select(est) %>%
+        rownames_to_column(var = "var") %>%
+        mutate(
+          order = 2
+        )
+
+      rbind(est, hp)
+
+    })
+  ) %>%
+  dplyr::select(outcomes, hp) %>%
+  unnest(hp) %>%
+  pivot_wider(names_from = "outcomes", values_from = c("est")) %>%
+  arrange(order) %>%
+  dplyr::select(-order)
+
+taula$var <- gsub("Precision for (.*)", "SD (\\1)", taula$var)
+
+names(taula) <- c("", "Cases", "Hospitalisations")
+
+kable(taula, caption = "Estimated fixed effects and random effects hyperparameters for the spatio-temporal with spatial covariates and vaccination (1-week lag) model for cases and hospitalisations.", format = "latex") %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  pack_rows(
+    "Fixed effects", 1, 4
+  ) %>%
+  pack_rows(
+    "Random effects", 5, 8
+  )
+
+#Presentation UB
+taula <- taula[1:4,]
+t <- kable(taula, caption = "RR (CI95%) of the vaccination and the adjusted spatial covariates") %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  row_spec(4, background = "#4A90E2", color = "white")
+raw_code <- paste0(as.character(t), collapse = "\n")
+
+cat(raw_code)
 
 ```
 

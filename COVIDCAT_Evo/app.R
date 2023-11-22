@@ -30,9 +30,9 @@ library(DT)
 library(shinyBS)
 library(shinyjs)
 
-source("VacModule.R")
-source("outcomeModule.R")
-source("modModule.R")
+source("Modules/VacModule.R")
+source("Modules/outcomeModule.R")
+source("Modules/modModule.R")
 
 #### UI ####
 ui <- tagList(
@@ -143,6 +143,7 @@ wellPanel(titlePanel("Software"),
 wellPanel(titlePanel("References"),
           HTML("<ul>
                     <li> Moraga, Paula. (2019). <a href='https://www.paulamoraga.com/book-geospatial'><i> Geospatial Health Data: Modeling and Visualization with R-INLA and Shiny </i></a>. Chapman & Hall/CRC Biostatistics Series </li>
+                    <li> Aritz Adin Urtasun, María Dolores Ugarte Martínez, and Tomás Goicoa Mangado (2017). “Hierarchical and spline-based models in space-time disease mapping”. PhD thesis. Dissertation, Universidad Publica de Navarra, Spain. </li>
                     <li>Knorr-Held L. Bayesian modelling of inseparable space-time variation in disease risk. Stat Med. 2000;19(17-18):2555-2567. doi:10.1002/1097-0258(20000915/30)19:17/18<2555::aid-sim587>3.0.co;2-#</li>
                     <li>H. Rue, S. Martino, and N. Chopin. Approximate Bayesian inference for latent Gaussian models using integrated nested Laplace approximations (with discussion). Journal of the Royal Statistical Society, Series B, 71(2):319{392, 2009. </li>
                     <li> FRANCE | COVID <a href='https://guillaumepressiat.shinyapps.io/covidfrance/'>https://guillaumepressiat.shinyapps.io/covidfrance/</a> [Accessed at 05/10/2020]</li> 
@@ -163,17 +164,17 @@ wellPanel(titlePanel("References"),
 server <- function(input, output){
   
   #### Load data ####
-  load("ndat_vac.Rda")
-  load("dat_cat.Rda")
-  load("shapefileT.Rda")
-  load("dat_covar.Rda")
+  load("Data/dat_cat.Rda")
+  load("Data/shapefileT.Rda")
+  load("Data/dat_covar.Rda")
+  load("Data/ndat_vac.Rda")
   
   #Estimated RR
-  load("res_model.Rda")
-  load("dat_rr.Rda")
-  load("dat_spatial.Rda")
-  load("dat_temp.Rda")
-  load("dat_sptemp.Rda")
+  load("Data/res_model.Rda")
+  load("Data/dat_rr.Rda")
+  load("Data/dat_spatial.Rda")
+  load("Data/dat_temp.Rda")
+  load("Data/dat_sptemp.Rda")
 
   tab <- reactiveVal(NULL)
   observeEvent(input$navbar, {

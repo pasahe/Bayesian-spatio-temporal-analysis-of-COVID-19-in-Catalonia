@@ -7,7 +7,7 @@ knit: (function(inputFile, encoding) {
  
   rmarkdown::render(inputFile,
       encoding=encoding, 
-      output_file=file.path(dirname('C:\\Users\\psatorra\\Documents\\TFM'),'TFM/5_Productes/Analysis_Spatial_Temporal.html')) })
+      output_file='Reports/Analysis_Spatial_Temporal.html') })
 output:
   html_document:
     toc: true
@@ -45,6 +45,11 @@ library(ggridges)
 library(plotly)
 library(DT)
 library(RColorBrewer)
+library(rcartocolor)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(leaflet)
 
 #Enumerar taules i figures
 fig_nums <- captioner(prefix = 'Figure')
@@ -52,58 +57,56 @@ tab_nums <- captioner(prefix = 'Table')
 citef <- pryr::partial(fig_nums, display = 'cite')
 citet <- pryr::partial(tab_nums, display = 'cite')
 ###############
-# setwd('P:/TFM')
-setwd('C:\\Users\\psatorra\\Documents\\TFM')
-dades_ana <- '2_Dades/2_Analisi'
 
 #Load data by ABS and date
-load(file.path(dades_ana, "dat.Rda"))
+load("Data/dat.Rda")
 
 #Load all incidences from the global of CAT
-load(file.path(dades_ana, "dat_cat.Rda"))
+load("Data/1_Processed/dat_cat.Rda")
 
 #Load all incidences from each health regions
-load(file.path(dades_ana, "dat_rs.Rda"))
+load("Data/1_Processed/dat_rs.Rda")
 
 #Load shapefileT
-load(file.path(dades_ana, "shapefileT.Rda"))
+load("Data/1_Processed/shapefileT.Rda")
 
 #Load population
-load(file.path(dades_ana, "pob_abs.Rda"))
+load("Data/1_Processed/pob_abs.Rda")
 
 #Load cases for each outcome
-load(file.path(dades_ana, "dat_edat.Rda"))
-load(file.path(dades_ana, "dat_hosp.Rda"))
+load("Data/1_Processed/dat_edat.Rda")
+load("Data/1_Processed/dat_hosp.Rda")
 
 #Load covariates
-load(file = file.path(dades_ana, "Covariates/dat_covar.Rda"))
+load("Data/1_Processed/dat_covar.Rda")
 
+#We need to compile SAE.R to have the data in the '2_Analysed' folder
 #Spatial models
 #Load DIC & WAIC of spatial models
-load(file.path(dades_ana,"Spatial/sp_dic_waic.Rda"))
+load("Data/2_Analysed/Spatial/sp_dic_waic.Rda")
 #Load RR of spatial models
-load(file.path(dades_ana, "Spatial/res_sp.Rda"))
+load("Data/2_Analysed/Spatial/res_sp.Rda")
 #Load hyperparameters of BYM2 spatial model
-load(file.path(dades_ana, "Spatial/bym2_hp.Rda"))
+load("Data/2_Analysed/Spatial/bym2_hp.Rda")
 
 #Spatio-Temporal models
 #Load DIC & WAIC of spatio-temporal base models
-load(file.path(dades_ana, "SpatioTemporal/st_dic_waic_base.Rda"))
+load("Data/2_Analysed/SpatioTemporal/st_dic_waic_base.Rda")
 #Load DIC & WAIC of spatio-temporal models with different type of interactions
-load(file.path(dades_ana, "SpatioTemporal/st_dic_waic.Rda"))
-load(file.path(dades_ana, "SpatioTemporal/st_dic_waic_sir2.Rda"))
+load("Data/2_Analysed/SpatioTemporal/st_dic_waic.Rda")
+load("Data/2_Analysed/SpatioTemporal/st_dic_waic_sir2.Rda")
 
 #Load the spatio-temporal models with type II interaction (sir & sir2)
-load(file = file.path(dades_ana, "SpatioTemporal/ndat_sae_II.Rda"))
+load("Data/2_Analysed/SpatioTemporal/ndat_sae_II.Rda")
 
 #Spatial covariates
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_raw.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_urban.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/ndat_sae_si_comp.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_int.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_comp.Rda"))
-load(file = file.path(dades_ana, "SpatioTemporal/Covariates/res_sae_si_quad.Rda"))
+load("Data/2_Analysed/Covariates/res_sae_raw.Rda")
+load("Data/2_Analysed/Covariates/res_sae_urban.Rda")
+load("Data/2_Analysed/Covariates/ndat_sae_si_comp.Rda")
+load("Data/2_Analysed/Covariates/res_sae_si.Rda")
+load("Data/2_Analysed/Covariates/res_sae_int.Rda")
+load("Data/2_Analysed/Covariates/res_sae_si_comp.Rda")
+load("Data/2_Analysed/Covariates/res_sae_si_quad.Rda")
 
 #Les dades de mobilitat no les carregarem perquè són mensuals (no tenim suficient variabilitat...)
 #Les dades de restriccions les hauríem de processar abans d'incorporar-les com a covariants
@@ -116,7 +119,7 @@ var_lab <- tibble(var = c("perc_women", "perc_70", "perc_70_cat", "dens", "dens_
 
 #Create var-lab dictionary for socieoconomic index components
 var_lab2 <- tibble(var = c("poblacio_exempta_de_copagament_farmaceutic", "poblacio_amb_rendes_inferiors_a_18_000_euros", "poblacio_amb_rendes_superiors_a_100_000_euros", "poblacio_amb_ocupacions_manuals", "poblacio_amb_nivell_dinstruccio_insuficient", "taxa_de_mortalitat_prematura", "hospitalitzacions_evitables"),
-                  lab = c("Population exempted from pharmaceutical co-payment", "Population income < 18k€", "Population income > 100k€", "Population manual employment", "Population with insufficient education", "Premature mortality rate", "Avoidable hospitalisations")
+                  lab = c("Population exempted from pharmaceutical co-payment", "Population income < 18k€", "Population income > 100k€", "Population manual employment", "Population with inadequate level of education", "Premature mortality rate", "Avoidable hospitalisations")
                   )
 ```
 
@@ -135,6 +138,101 @@ This report contains all the tables and figures with the results of the study. I
 # Description
 
 ## ABS characteristics
+
+`r fig_nums("map_pop", "Map of the 2020 population by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+spob_abs <- pob_abs %>%
+  filter(any == 2020) %>%
+  group_by(codi_abs) %>%
+  summarise(
+    N = sum(N)
+  )
+
+dat_map <- st_as_sf(shapefileT) %>%
+  left_join(spob_abs, by = "codi_abs")
+
+pal <- colorNumeric(palette = carto_pal(5, "BrwnYl"), domain = dat_map$N)
+
+map <- leaflet(data = dat_map, options = leafletOptions(zoomControl = FALSE)) %>%
+  addProviderTiles(provider = "OpenStreetMap.Mapnik")%>%
+  htmlwidgets::onRender("function(el, x) {
+        L.control.zoom({ position: 'topleft' }).addTo(this)
+    }") %>%
+  setView(1.5209,41.5912,zoom=7)%>% 
+  addPolygons(group="polygons",weight = 1, color="grey" , smoothFactor = 0.5,highlightOptions = highlightOptions(color = "white", weight = 4,bringToFront = TRUE), fillColor= ~pal(N), fillOpacity = 0.8, layerId=~abs) %>% 
+  addLegend(layerId="legend", pal = pal, values = ~N, opacity = 0.5, title = "Population", position = "bottomright") 
+
+map
+
+# saveWidget(map, "temp.html", selfcontained=TRUE)
+# webshot::webshot("temp.html", file=r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\map_pob_abs.png)", cliprect = c(0, 200, 800, 800))
+
+```
+
+`r fig_nums("map_pop2", "Map of the 2020 population by ABS")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+library(leaflet)
+
+spob_abs <- pob_abs %>%
+  filter(any == 2020) %>%
+  group_by(codi_abs) %>%
+  summarise(
+    N = sum(N)
+  )
+
+dat_map <- st_as_sf(shapefileT) %>%
+  left_join(spob_abs, by = "codi_abs")
+
+pal <- colorNumeric(palette = carto_pal(5, "BrwnYl"), domain = dat_map$N)
+
+map <- leaflet(data = dat_map, options = leafletOptions(zoomControl = FALSE)) %>%
+  addProviderTiles(provider = "OpenStreetMap.Mapnik")%>%
+  htmlwidgets::onRender("function(el, x) {
+        L.control.zoom({ position: 'topleft' }).addTo(this)
+    }") %>%
+  setView(1.5209,41.5912,zoom=8)%>% 
+  addPolygons(group="polygons",weight = 1, color="grey" , smoothFactor = 0.5,highlightOptions = highlightOptions(color = "white", weight = 4,bringToFront = TRUE), fillColor= ~pal(N), fillOpacity = 0.8, layerId=~abs) %>% 
+  addLegend(layerId="legend", pal = pal, values = ~N, opacity = 0.5, title = "Population", position = "bottomright") 
+
+map
+
+saveWidget(map, "temp.html", selfcontained=TRUE)
+webshot::webshot("temp.html", file=r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\Premi Student\Presentation_STUDENT\Figures\figure1.png)", vwidth = 800, vheight = 800)
+
+```
+
+`r fig_nums("map_rs", "Map of the Catalonia ABS and sanitary regions")`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+library(leaflet)
+library(htmltools)
+library(leaflegend)
+dat_map <- st_as_sf(shapefileT) 
+
+pal <- colorFactor(palette = RColorBrewer::brewer.pal(7, "Dark2"), levels = sort(unique(dat_map$NOMRS)))
+
+map <- leaflet(data = dat_map, options = leafletOptions(zoomControl = FALSE)) %>%
+  addProviderTiles(provider = "OpenStreetMap.Mapnik")%>%
+  htmlwidgets::onRender("function(el, x) {
+        L.control.zoom({ position: 'topleft' }).addTo(this)
+    }") %>%
+  setView(1.5209,41.5912,zoom=8)%>% 
+  addPolygons(group="polygons",weight = 1, color="black" , smoothFactor = 0.5,highlightOptions = highlightOptions(color = "white", weight = 4,bringToFront = TRUE), fillColor= ~pal(NOMRS), fillOpacity = 0.8, layerId=~abs) %>% 
+  addLegendFactor(layerId="legend", pal = pal, values = ~NOMRS, opacity = 0.5, title = "Health regions", position = "bottomright")
+  # addLegendFactor(layerId="legend", pal = pal, values = ~NOMRS, opacity = 0.5, title = "", position = "bottomright", labelStyle = "font-size: 30px;")
+
+
+saveWidget(map, "temp.html", selfcontained=TRUE)
+webshot::webshot("temp.html", file=r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\figure1.png)", vwidth = 800, vheight = 800)
+# webshot::webshot("temp.html", file=r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\Premi Student\Presentation_STUDENT\Figures\figure1.png)", vwidth = 800, vheight = 800)
+
+```
+
 
 We have different demographic and socio-economic characteristics for the ABS. Demographic characteristics are the density of the population and the variable that indicates if an area is urban or rural. Socio-economic characteristics are the seven standardised variables that represent seven different socio-economic indicators collected in 2017. The socioeconomic index is an index that combines all of them and, as higher is the value, the area has more poverty.
 
@@ -479,7 +577,7 @@ sdat_cat <- dat_cat %>%
 `r fig_nums("plot_cas", "Plot of the evolution of the weekly case rate per 100k habitants across the study period")`
 
 ```{r echo = FALSE, warning=FALSE, message=FALSE}
-ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+p <- ggplot(data = sdat_cat, aes(x = data, y = rate)) +
   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
   geom_vline(aes(xintercept = xint), linetype = "dashed") +
@@ -487,14 +585,16 @@ ggplot(data = sdat_cat, aes(x = data, y = rate)) +
   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
   ylab("Weekly case rate (x100k pop.)")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\evolution_cas.png)",width = 4000,height = 1800,res = 600)
+p
+p1 <- p
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\evolution_cas.png)",width = 4000,height = 2000,res = 600)
 # ggplot(data = sdat_cat, aes(x = data, y = rate)) +
 #   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
 #   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
 #   geom_vline(aes(xintercept = xint), linetype = "dashed") +
 #   theme_classic() +
 #   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-#   ylab("Weekly case rate (x100k pop.)")
+#   ylab("Weekly case rate (x100,000 pop.)")
 # dev.off()
 
 ```
@@ -526,7 +626,7 @@ cat <- ggplot(map) +
            axis.text = element_blank()
        ) +
        # ggtitle("Cumulative case incidence percentage") +
-       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1)
+       scale_fill_distiller(name = "Cases (%)", palette = "YlOrRd", direction = 1)
 
 #map of bcn
 bcn <- ggplot(map) + 
@@ -578,7 +678,9 @@ m <- cat +
 
 m
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\map_distribution_cas.png)",width = 3000,height = 2000,res = 600)
+m1 <- m
+
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\map_distribution_cas.png)",width = 3000,height = 2000,res = 600)
 # m
 # dev.off()
 
@@ -1001,7 +1103,7 @@ sdat_cat <- dat_cat %>%
 `r fig_nums("plot_hosp", "Plot of the evolution of the weekly hospitalisation rate per 100k habitants across the study period")`
 
 ```{r echo = FALSE, warning=FALSE, message=FALSE}
-ggplot(data = sdat_cat, aes(x = data, y = rate)) +
+p <- ggplot(data = sdat_cat, aes(x = data, y = rate)) +
   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
   geom_vline(aes(xintercept = xint), linetype = "dashed") +
@@ -1009,14 +1111,17 @@ ggplot(data = sdat_cat, aes(x = data, y = rate)) +
   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
   ylab("Weekly hospitalisation rate (x100k pop.)")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\evolution_hosp.png)",width = 4000,height = 1800,res = 600)
+p
+p2 <- p
+
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\evolution_hosp.png)",width = 4000,height = 2000,res = 600)
 # ggplot(data = sdat_cat, aes(x = data, y = rate)) +
 #   geom_bar(stat = "identity",fill="#DD8888", alpha = 0.5)+
 #   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
 #   geom_vline(aes(xintercept = xint), linetype = "dashed") +
 #   theme_classic() +
 #   theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
-#   ylab("Weekly hospitalisation rate (x100k pop.)")
+#   ylab("Weekly hospitalisation rate (x100,000 pop.)")
 # dev.off()
 ```
 
@@ -1025,7 +1130,6 @@ The hospitalisation incidence is more comparable between the different waves hav
 `r fig_nums("map_hosp", "Map of the cumulative hospitalisation percentage across all the study period for each ABS")`
 
 ```{r echo = FALSE, warning=FALSE, message=FALSE}
-
 sdat <- dat %>% 
   group_by(abs) %>% 
   summarise(
@@ -1047,7 +1151,7 @@ cat <- ggplot(map) +
            axis.text = element_blank()
        ) +
        # ggtitle("Cumulative hospitalisation percentage") +
-       scale_fill_distiller(name = "%", palette = "YlOrRd", direction = 1)
+       scale_fill_distiller(name = "Hosp (%)", palette = "YlOrRd", direction = 1)
 
 #map of bcn
 bcn <- ggplot(map) + 
@@ -1100,11 +1204,26 @@ m <- cat +
 
 m
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\map_distribution_hosp.png)",width = 3000,height = 2000,res = 600)
+m2 <- m
+
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\map_distribution_hosp.png)",width = 3000,height = 2000,res = 600)
 # m
 # dev.off()
-
 ```
+
+
+<!-- ```{r echo = FALSE, warning=FALSE, message=FALSE, eval=FALSE} -->
+<!-- png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\figure2.png)",width = 8000,height = 4000,res = 600) -->
+
+<!-- ggarrange( -->
+<!--   m1 + theme(plot.title = element_text(hjust = 0.5, margin = margin(200, 20, 20, 20))), -->
+<!--   p1 + theme(plot.title = element_text(hjust = 0.5, margin = margin(200, 20, 20, 20))), -->
+<!--   m2 + theme(plot.title = element_text(hjust = 0.5, margin = margin(200, 20, 20, 20))), -->
+<!--   p2 + theme(plot.title = element_text(hjust = 0.5, margin = margin(200, 20, 20, 20))), -->
+<!--   labels = paste0(letters[1:4], ")") -->
+<!-- ) -->
+<!-- dev.off() -->
+<!-- ``` -->
 
 `r fig_nums("dot_plot_hosp", "Dot plot of the cumulative hospitalisation incidence percentage across all the study period for each ABS")`
 
@@ -2154,8 +2273,8 @@ kable(taula) %>%
 #   kable_styling()
 
 # t <- kable(taula, align = "c") %>%
-#   kable_styling(bootstrap_options = c("striped","hover")) %>% 
-#   column_spec(2, bold = c(FALSE, TRUE), color = c("black", "#4A90E2")) %>% 
+#   kable_styling(bootstrap_options = c("striped","hover")) %>%
+#   column_spec(2, bold = c(FALSE, TRUE), color = c("black", "#4A90E2")) %>%
 #   column_spec(3, bold = c(TRUE, FALSE), color = c("#4A90E2", "black"))
 # raw_code <- paste0(as.character(t), collapse = "\n")
 # cat(raw_code)
@@ -2188,7 +2307,7 @@ map$rr_hosp <- spatial %>% filter(outcomes == "hosp") %>% pull(rr)
 cat <- ggplot(map) + 
   geom_sf(aes(fill = rr_cas)) +
   scale_fill_gradient2(
-    name = "RR", midpoint = log(1), low = "blue", mid = "white", high = "red", trans = "log10", breaks = c(0.6, 0.8, 1, 1.25, 1.5)
+    name = "RR Cases", midpoint = log(1), low = "blue", mid = "white", high = "red", trans = "log10", breaks = c(0.6, 0.8, 1, 1.25, 1.5)
   ) +
   theme_bw() +
   theme(
@@ -2215,7 +2334,7 @@ bcn <- ggplot(map) +
              panel.grid.major = element_blank(), panel.grid.minor = element_blank()
              )
 
-p1 <- cat + 
+p1_sp <- cat + 
   annotation_custom(
     grob = ggplotGrob(bcn),
     xmin = 2,
@@ -2246,16 +2365,16 @@ p1 <- cat +
     color = "black"
   )
 
-p1 + ggtitle("Cases")
+p1_sp + ggtitle("Cases")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\map_rr_spat_cas.png)",width = 3000,height = 2000,res = 600)
-# p1
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\map_rr_spat_cas.png)",width = 3000,height = 2000,res = 600)
+# p1_sp
 # dev.off()
 
 cat <- ggplot(map) + 
   geom_sf(aes(fill = rr_hosp)) +
   scale_fill_gradient2(
-    name = "RR", midpoint = log(1), low = "blue", mid = "white", high = "red", trans = "log10", breaks = c(0.5, 0.8, 1, 1.25, 2)
+    name = "RR Hosp.", midpoint = log(1), low = "blue", mid = "white", high = "red", trans = "log10", breaks = c(0.5, 0.8, 1, 1.25, 2)
   ) +
   theme_bw() +
   theme(
@@ -2282,7 +2401,7 @@ bcn <- ggplot(map) +
              panel.grid.major = element_blank(), panel.grid.minor = element_blank()
              )
 
-p2 <- cat + 
+p2_sp <- cat + 
   annotation_custom(
     grob = ggplotGrob(bcn),
     xmin = 2,
@@ -2313,10 +2432,10 @@ p2 <- cat +
     color = "black"
   )
 
-p2 + ggtitle("Hospitalisations")
+p2_sp + ggtitle("Hospitalisations")
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\map_rr_spat_hosp.png)",width = 3000,height = 2000,res = 600)
-# p2
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\map_rr_spat_hosp.png)",width = 3000,height = 2000,res = 600)
+# p2_sp
 # dev.off()
 ```
 
@@ -2724,7 +2843,7 @@ plot_temp <- tibble(data = unique(dat$data), effect = stemp$mean, effect_lci = s
 #   scale_y_continuous(name = "RR", trans = "log10", sec.axis = sec_axis(~.*150, name = "Weekly case rate"))
 # 
 
-p1 <- ggplot() +
+p1_temp <- ggplot() +
   geom_bar(data = dat_cat, aes(x = data, y = rate_cas), stat = "identity",fill="#DD8888", alpha = 0.5)+
   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
   theme_classic() + 
@@ -2734,10 +2853,10 @@ p1 <- ggplot() +
   geom_line(data = plot_temp, aes(x = data, y = effect*150), alpha = 0.5) +
   geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*150, ymax = effect_uci*150), alpha = 0.5, fill = "grey70") +
   geom_hline(yintercept = 1*150, color = "black", linetype = "dashed", alpha = 0.5) +
-  scale_y_continuous(name = "Weekly case rate (x100k pop.)", position = "right", trans = "log10", sec.axis = sec_axis(~./150, name = "RR"))
+  scale_y_continuous(name = "Weekly case rate (x100,000 pop.)", position = "right", trans = "log10", sec.axis = sec_axis(~./150, name = "RR Cases"))
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\rr_temp_cas.png)",width = 4000,height = 1800,res = 600)
-# p1
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\rr_temp_cas.png)",width = 4000,height = 1800,res = 600)
+# p1_temp
 # dev.off()
 
 stemp <- temp %>%
@@ -2745,7 +2864,7 @@ stemp <- temp %>%
 
 plot_temp <- tibble(data = unique(dat$data)[unique(dat$data) >= ymd("2020-05-03")], effect = stemp$mean, effect_lci = stemp$`0.025quant`, effect_uci = stemp$`0.975quant`)
 
-p2 <- ggplot() +
+p2_temp<- ggplot() +
   geom_bar(data = dat_cat, aes(x = data, y = rate_hosp), stat = "identity",fill="#DD8888", alpha = 0.5)+
   scale_x_date(date_breaks = "3 months", date_labels = "%Y-%m") +
   theme_classic() +
@@ -2755,15 +2874,13 @@ p2 <- ggplot() +
   geom_line(data = plot_temp, aes(x = data, y = effect*14), alpha = 0.5) +
   geom_ribbon(data = plot_temp, aes(x = data, ymin = effect_lci*14, ymax = effect_uci*14), alpha = 0.5, fill = "grey70") +
   geom_hline(yintercept = 1*14, color = "black", linetype = "dashed", alpha = 0.5) +
-  scale_y_continuous(name = "Weekly hospitalisation rate (x100k pop.)", position = "right", trans = "log10", sec.axis = sec_axis(~./14, name = "RR"))
+  scale_y_continuous(name = "Weekly hospitalisation rate (x100,000 pop.)", position = "right", trans = "log10", sec.axis = sec_axis(~./14, name = "RR Hospitalisations"))
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\rr_temp_hosp.png)",width = 4000,height = 1800,res = 600)
-# p2
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\rr_temp_hosp.png)",width = 4000,height = 1800,res = 600)
+# p2_temp
 # dev.off()
 
-p1/p2
-
-
+p1_temp/p2_temp
 ```
 
 The temporal relative risk follows the time trend of the outcomes in the total territory, so it fits good the temporal trend in the whole territory.
@@ -2806,8 +2923,9 @@ rr_sp_temp <- rr_sp_temp %>%
 
 dat_plot <- tibble(nomrs = rev(sort(unique(rr_sp_temp$NOMRS)))) %>% 
   mutate(
-    nomrs = factor(nomrs, levels = unique(nomrs))
+    nomrs = factor(nomrs, levels = sort(unique(nomrs)))
   ) %>% 
+  arrange(nomrs) %>% 
   mutate(
     id = row_number(),
     df = pmap(list(nomrs, id), function(x, y) {
@@ -2833,7 +2951,7 @@ dat_plot <- tibble(nomrs = rev(sort(unique(rr_sp_temp$NOMRS)))) %>%
   ) %>% 
   unnest(df)
 
-p <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+p1_sptemp <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
         geom_line() +
         facet_wrap(~nomrs, ncol = 2) +
         geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
@@ -2842,14 +2960,14 @@ p <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color
         scale_y_continuous(trans = "log10") + 
         scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
         theme_classic() + 
-        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank(), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size = 16), strip.text = element_text(size = 20)) +
         geom_vline(aes(xintercept = xint), linetype = "dashed") +
-        ylab("RR")
+        ylab("RR Cases")
 
-p
+p1_sptemp
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\rr_sptemp_cas.png)",width = 12000,height = 6000,res = 1000)
-# p
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\rr_sptemp_cas.png)",width = 10000,height = 6000,res = 800)
+# p1_sptemp
 # dev.off()
 
 # #For the presentation we will display only two regions 
@@ -2911,8 +3029,9 @@ rr_sp_temp <- rr_sp_temp %>%
 
 dat_plot <- tibble(nomrs = rev(sort(unique(rr_sp_temp$NOMRS)))) %>% 
   mutate(
-    nomrs = factor(nomrs, levels = unique(nomrs))
+    nomrs = factor(nomrs, levels = sort(unique(nomrs)))
   ) %>% 
+  arrange(nomrs) %>% 
   mutate(
     id = row_number(),
     df = pmap(list(nomrs, id), function(x, y) {
@@ -2938,7 +3057,7 @@ dat_plot <- tibble(nomrs = rev(sort(unique(rr_sp_temp$NOMRS)))) %>%
   ) %>% 
   unnest(df)
 
-p <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
+p2_sptemp <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color = factor(color), alpha = alpha)) +
         geom_line() +
         facet_wrap(~nomrs, ncol = 2) +
         geom_hline(yintercept = 1, color = "black", linetype = "dashed") +
@@ -2947,14 +3066,14 @@ p <- ggplot(data = dat_plot, aes(x = data, y = rr, group = factor(idarea), color
         scale_y_continuous(trans = "log10") + 
         scale_color_manual(guide = "none", values = c("grey", RColorBrewer::brewer.pal(7, "Dark2"))) +
         theme_classic() + 
-        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank()) +
+        theme(axis.line=element_blank(),axis.title.x=element_blank(), axis.ticks.y = element_blank(), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size = 16), strip.text = element_text(size = 20)) +
         geom_vline(aes(xintercept = xint), linetype = "dashed") +
-        ylab("RR")
+        ylab("RR Hospitalisations")
 
-p
+p2_sptemp
 
-# png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Figures\rr_sptemp_hosp.png)",width = 12000,height = 6000,res = 1000)
-# p
+# png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\rr_sptemp_hosp.png)",width = 10000,height = 6000,res = 800)
+# p2_sptemp
 # dev.off()
 
 #For the presentation we will display only two regions
@@ -2976,6 +3095,28 @@ p
 # png(r"(C:\Users\psatorra\Documents\TFM\5_Productes\Presentation\Figures\rr_sptemp_hosp.png)",width = 4000,height = 3000,res = 600)
 # p
 # dev.off()
+```
+
+```{r echo = FALSE, warning=FALSE, message=FALSE, eval=FALSE}
+png(r"(I:\CTebe\2_Projectes\2023_05TFMPS\4_Productes\2_Figures\figure3.png)", width = 10000,height = 8000,res = 600)
+p1 <- ggarrange(
+  p1_sp + theme(plot.margin = margin(10, 10, 10, 10)),
+  p2_sp + theme(plot.margin = margin(10, 10, 10, 10)),
+  p1_temp + theme(plot.margin = margin(10, 10, 10, 10)),
+  p2_temp + theme(plot.margin = margin(10, 10, 10, 10)),
+  labels = c("a)", "b)", "c)", "d)", "e)", "f)")
+)
+
+p2 <- ggarrange(
+  p1_sptemp + theme(plot.margin = margin(10, 10, 10, 10)),
+  p2_sptemp + theme(plot.margin = margin(10, 10, 10, 10)),
+  labels = c("e)", "f)")
+) 
+
+ggarrange(p1, p2, widths = c(1, 2), nrow = 2, ncol = 1) +
+  theme(text = element_text(size = 30))
+
+dev.off()
 ```
 
 For the hospitalizations we have some different patterns indicating different outbreaks, for each region except in Lleida that it corresponds to the same outbreak in Segrià between the first and second wave. For example, Girona in terms of hospitalizations have a lot of outbreaks whereas for cases it behaved like the general population. The most pronounced outbreaks of hospitalizations now happen of course in Lleida, in Girona in the beginning of the first wave and in some other time points to a lesser extent, in some areas of Catalunya Central and Tarragona just before the sixth wave, in Barcelona in the first wave and in Alt Pirineu i Aran in the beginning of the second wave and in the end of the third.
@@ -4139,9 +4280,9 @@ nplot <- rbind(
 (nplot$plot[[5]] | nplot$plot[[6]])
 
 # for(i in 1:nrow(nplot)) {
-#   png(str_glue("C:/Users/psatorra/Documents/TFM/5_Productes/Figures/linear_covar_cas_{i}.png"), width = 3000,height = 2000,res = 600)
-#   print(nplot$plot[[i]])
-#   dev.off()
+  # png(str_glue("I:/CTebe/2_Projectes/2023_05TFMPS/4_Productes/2_Figures/linear_covar_cas_{i}.png"), width = 3000,height = 2000,res = 600)
+  # print(nplot$plot[[i]])
+  # dev.off()
 # }
 ```
 
@@ -4200,9 +4341,9 @@ nplot <- rbind(
 (nplot$plot[[5]] | nplot$plot[[6]])
 
 # for(i in 1:nrow(nplot)) {
-#   png(str_glue("C:/Users/psatorra/Documents/TFM/5_Productes/Figures/linear_covar_hosp_{i}.png"), width = 3000,height = 2000,res = 600)
-#   print(nplot$plot[[i]])
-#   dev.off()
+  # png(str_glue("I:/CTebe/2_Projectes/2023_05TFMPS/4_Productes/2_Figures/linear_covar_hosp_{i}.png"), width = 3000,height = 2000,res = 600)
+  # print(nplot$plot[[i]])
+  # dev.off()
 # }
 
 ```
@@ -4500,9 +4641,9 @@ kable(taula) %>%
 #   ) %>%
 #   unnest(var) %>%
 #   dplyr::select(model, contains("Precision"))
-# 
+#
 # names(taula) <- c("", "Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)")
-# 
+#
 # kable(taula, caption = "Proportion percentage of the total variability explained by each component.", format = "latex") %>%
 #   kable_styling()
 
@@ -4675,7 +4816,7 @@ kable(taula) %>%
 # taula <- sdat_sae %>%
 #   filter((outcomes == "hosp" & !model %in% c("Urban", "Urban x SI")) | (outcomes == "cas" & !model %in% c("Urban", "Urban + SI", "Urban x SI"))) %>%
 #   unnest(var) %>%
-#   dplyr::select(outcomes, model, contains("Precision")) %>% 
+#   dplyr::select(outcomes, model, contains("Precision")) %>%
 #   mutate(
 #     model = case_when(
 #       model == "Urban + SI^2" ~ "Urban + SI",
@@ -4689,17 +4830,18 @@ kable(taula) %>%
 #       grepl("idareatime", x) ~ "idareatime",
 #       TRUE ~ x
 #     )
-#   }) %>% 
-#   pivot_wider(names_from = outcomes, values_from = idarea:idareatime) %>% 
+#   }) %>%
+#   pivot_wider(names_from = outcomes, values_from = idarea:idareatime) %>%
 #   dplyr::select(model, contains("_cas"), contains("_hosp"))
 # 
 # names(taula) <- c("", rep(c("Variance Spatial (%)", "Variance Temporal (%)", "Variance Spatio-Temporal (%)"), 2))
 # 
-# t <- kable(taula) %>%
-#   kable_styling(bootstrap_options = c("striped", "hover")) %>% 
-#   add_header_above(c(" " = 1, "Cases" = 3, "Hospitalisation" = 3)) %>% 
-#   column_spec(2, color = c("#4A90E2")) %>% 
-#   column_spec(5,  color = c("#4A90E2"))
+# t <- kable(taula, align = "c") %>%
+#   kable_styling(bootstrap_options = c("striped", "hover")) %>%
+#   add_header_above(c(" " = 1, "Cases" = 3, "Hospitalisation" = 3)) %>%
+#   column_spec(2, background = "#4A90E2", color = "white") %>%
+#   column_spec(5, background = "#4A90E2", color = "white")
+# 
 # raw_code <- paste0(as.character(t), collapse = "\n")
 # cat(raw_code)
 ```
