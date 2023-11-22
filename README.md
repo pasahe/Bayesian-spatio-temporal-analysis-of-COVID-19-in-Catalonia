@@ -20,11 +20,11 @@ All of the code is done using _R_ software version 4.3.0. Mainly, the _R_ packag
 - *Analysis_Spatial_Temporal*: contains the description of the variables of the study and presents the results of the spatial and the spatio-temporal models, including also the ABS characteristics in the modely.
 - *Analysis_Spatial_Temporal_Vaccination*: contains the description of the vaccination data and the results of the estimated spatio-temporal model including the vaccination effect.
 
-For each notebook, the R-markdown file with the code for elaborating the notebook is included together with the resulting html notebook.
+For each notebook, the R-markdown file with the code for elaborating the notebook is included together with the resulting html notebook in the *Report/* folder.
 
 ### Shiny application
 
-In the COVIDCAT_Evo folder we can find all of the code for developing the R shiny application (https://brui.shinyapps.io/covidcat_evo/), which visualizes the results of the study.
+In the *COVIDCAT_Evo/* folder we can find all of the code for developing the R shiny application (https://brui.shinyapps.io/covidcat_evo/), which visualizes the results of the study.
 
 
 
