@@ -21,14 +21,16 @@ library(readxl)
 #Read data from portal dades obertes (one first time)
 # https://governobert.gencat.cat/ca/dades_obertes/inici/
 
+#To read the data one has to follow the instructions in the API documentation of the database (f.ex.: https://dev.socrata.com/foundry/analisi.transparenciacatalunya.cat/jj6z-iyrp) to read the data with the SOCRATA API. 
+
 #Cases data by ABS (https://analisi.transparenciacatalunya.cat/Salut/Registre-de-casos-de-COVID-19-a-Catalunya-per-rea-/xuwf-dxjd)
 #No more updates at 2022-07-26
 #Initial date: 2020-03-01
 #Final date: 2022-07-25
 dat_cas <- read.socrata(
   "https://analisi.transparenciacatalunya.cat/resource/xuwf-dxjd.json",
-  email     = "psatorra@idibell.cat",
-  password  = "Pau.satorra24"
+  email     = "youremail",
+  password  = "yourpasswd"
 ) %>%
   #Variables format transformation
   mutate(
@@ -94,8 +96,8 @@ code_name <- dat_cas %>%
 #We will use this file to get the covid cases for each age group in the global of Catalonia
 dat_edat <- read.socrata(
   "https://analisi.transparenciacatalunya.cat/resource/qwj8-xpvk.json",
-  email     = "psatorra@idibell.cat",
-  password  = "Pau.satorra24"
+  email     = "youremail",
+  password  = "yourpasswd"
 ) %>%
   mutate(
     data = ymd(data),
@@ -142,8 +144,8 @@ dat_edat <- dat_edat %>%
 #Final date: 2023-01-29
 dat_hosp <- read.socrata(
   "https://analisi.transparenciacatalunya.cat/resource/hzw2-sfyd.json",
-  email     = "psatorra@idibell.cat",
-  password  = "Pau.satorra24"
+  email     = "youremail",
+  password  = "yourpasswd"
 ) %>%
   #Variables format transformation
   mutate_at(c("data_inici", "data_final"), ymd) %>%
@@ -206,8 +208,8 @@ dat_hosp <- dat_hosp %>%
 #Final date: 2022-07-25
 dat_vac <- read.socrata(
   "https://analisi.transparenciacatalunya.cat/resource/tp23-dey4.json",
-  email     = "psatorra@idibell.cat",
-  password  = "Pau.satorra24"
+  email     = "youremail",
+  password  = "yourpasswd"
 ) %>%
   #Variables format transformation
 mutate(
@@ -279,8 +281,8 @@ dat_vac <- dat_vac %>%
 #We have to group the age considering every age group for cases, hospitalization and vaccination
 pob_abs <- read.socrata(
   "https://analisi.transparenciacatalunya.cat/resource/ftq4-h9vk.json",
-  email     = "psatorra@idibell.cat",
-  password  = "Pau.satorra24"
+  email     = "youremail",
+  password  = "yourpasswd"
 ) 
 
 pob_cast <- pob_abs %>% 
