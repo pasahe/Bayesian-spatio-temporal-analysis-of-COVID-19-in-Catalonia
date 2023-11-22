@@ -24,11 +24,13 @@ For each notebook, the R-markdown file with the code for elaborating the noteboo
 
 ### Data
 
-- *dat.Rda*: contains the evolution of the observed, expected, rate and standardised incidence ratios (SIR) of cases/hospitalisation/vaccination, for each ABS and week. It also has the information about the ABS characteristics. It is created in the *SAE.R* file and it contains all the information needed to run the different spatio-temporal models.
+- *dat.Rda*: contains the evolution of the observed, expected, rate and standardised incidence ratios (SIR) of cases/hospitalisation/vaccination, for each ABS and week. It also has the information about the ABS characteristics. It is created in *SAE.R* and it contains all the information needed to run the different spatio-temporal models.
 
 - *0_Raw/*: this folder contains the external data needed, other than the data that is read through an API from the opendata portal of the Government of Catalonia.
 
 - *1_Processed/*: this folder contains the processed data from *MakingData.R*
+
+To have the data that would be inside the '2_Analysed/' folder, *SAE.R* has to be compiled. We have not uploaded them because of the high amount of memory that they have.
 
 ### Shiny application
 
