@@ -30,7 +30,7 @@ For each notebook, the R-markdown file with the code for elaborating the noteboo
 
 - *1_Processed/*: this folder contains the processed data from *MakingData.R*
 
-To have the data that would be inside the '2_Analysed/' folder, *SAE.R* has to be compiled. We have not uploaded them because of the high amount of memory that they have.
+To have the data that would be inside the *2_Analysed/* folder, *SAE.R* has to be compiled. We have not uploaded them because of the big size of the files.
 
 ### Shiny application
 
