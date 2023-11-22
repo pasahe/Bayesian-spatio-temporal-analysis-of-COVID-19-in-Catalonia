@@ -19,7 +19,7 @@ load(file = "Data/1_Processed/pob_abs.Rda")
 load(file = "Data/1_Processed/dat_cas.Rda")
 load(file = "Data/1_Processed/dat_edat.Rda")
 load(file = "Data/1_Processed/dat_hosp.Rda")
-load(file = "Data/1_Processed/shapefileT.Rda")
+load(file = "Data/shapefileT.Rda")
 
 #Load covariates
 load(file = "Data/1_Processed/dat_covar.Rda")

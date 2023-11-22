@@ -68,7 +68,7 @@ load("Data/1_Processed/dat_cat.Rda")
 load("Data/1_Processed/dat_rs.Rda")
 
 #Load shapefileT
-load("Data/1_Processed/shapefileT.Rda")
+load("Data/shapefileT.Rda")
 
 #Load population
 load("Data/1_Processed/pob_abs.Rda")

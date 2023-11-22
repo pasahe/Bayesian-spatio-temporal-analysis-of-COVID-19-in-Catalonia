@@ -630,7 +630,7 @@ save(dat_cat, file = "Data/1_Processed/dat_cat.Rda")
 save(dat_rs, file = "Data/1_Processed/dat_rs.Rda")
 
 #geography
-save(shapefileT, file = "Data/1_Processed/shapefileT.Rda")
+save(shapefileT, file = "Data/shapefileT.Rda")
 
 #Covariates
 save(dat_se_comp, file = "Data/1_Processed/dat_se_comp.Rda")
