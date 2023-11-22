@@ -26,6 +26,8 @@ For each notebook, the R-markdown file with the code for elaborating the noteboo
 
 - *dat.Rda*: contains the evolution of the observed, expected, rate and standardised incidence ratios (SIR) of cases/hospitalisation/vaccination, for each ABS and week. It also has the information about the ABS characteristics. It is created in *SAE.R* and it contains all the information needed to run the different spatio-temporal models.
 
+- *shapefileT.R*: contains the geography of the basic health areas (ABS) of Catalonia
+
 - *0_Raw/*: this folder contains the external data needed, other than the data that is read through an API from the opendata portal of the Government of Catalonia.
 
 - *1_Processed/*: this folder contains the processed data from *MakingData.R*
