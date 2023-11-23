@@ -142,12 +142,31 @@ wellPanel(titlePanel("Software"),
 ),
 wellPanel(titlePanel("References"),
           HTML("<ul>
-                    <li> Moraga, Paula. (2019). <a href='https://www.paulamoraga.com/book-geospatial'><i> Geospatial Health Data: Modeling and Visualization with R-INLA and Shiny </i></a>. Chapman & Hall/CRC Biostatistics Series </li>
                     <li> Aritz Adin Urtasun, María Dolores Ugarte Martínez, and Tomás Goicoa Mangado (2017). “Hierarchical and spline-based models in space-time disease mapping”. PhD thesis. Dissertation, Universidad Publica de Navarra, Spain. </li>
-                    <li>Knorr-Held L. Bayesian modelling of inseparable space-time variation in disease risk. Stat Med. 2000;19(17-18):2555-2567. doi:10.1002/1097-0258(20000915/30)19:17/18<2555::aid-sim587>3.0.co;2-#</li>
-                    <li>H. Rue, S. Martino, and N. Chopin. Approximate Bayesian inference for latent Gaussian models using integrated nested Laplace approximations (with discussion). Journal of the Royal Statistical Society, Series B, 71(2):319{392, 2009. </li>
-                    <li> FRANCE | COVID <a href='https://guillaumepressiat.shinyapps.io/covidfrance/'>https://guillaumepressiat.shinyapps.io/covidfrance/</a> [Accessed at 05/10/2020]</li> 
+                    <li>Blangiardo, Marta and Michela Cameletti (2015). Spatial and Spatio-temporal Bayesian
+Models with R-INLA. 1st.Wiley. DOI: 10.1002/9781118950203.</li>
+                    <li>Catalunya, Generalitat de (2017). Socioeconomic index for ABS. URL: https://obse
+rvatorisalut . gencat . cat / ca / observatori - desigualtats - salut / dades _
+obertes/ (visited on 04/28/2023).</li>
+                    <li>Catalunya, Generalitat de (2023). Dades obertes de Catalunya. URL: https://analisi
+.transparenciacatalunya.cat/en/ (visited on 04/28/2023).</li>
+                    <li>Cheng J, Karambelkar B, Xie Y (2023). _leaflet: Create Interactive Web Maps with the JavaScript 'Leaflet' Library_. R package version 2.1.2,
+  <https://CRAN.R-project.org/package=leaflet>.</li>
                     <li>Chang W, Cheng J, Allaire J, Sievert C, Schloerke B, Xie Y, Allen J, McPherson J, Dipert A, Borges B (2022). _shiny: Web Application Framework for R_. R package version 1.7.4, <https://CRAN.R-project.org/package=shiny>.</li>
+                    <li>Corpas-Burgos, Francisca and Miguel A. Martinez-Beneito (2021). “An Autoregressive Disease Mapping Model for Spatio-Temporal Forecasting”. In: Mathematics 9.4. ISSN: 2227-7390. DOI: 10.3390/math9040384.</li>
+                    <li>Goicoa, T. et al. (Mar. 2018). “In spatio-temporal disease mapping models, identifiability constraints affect PQL and INLA results”. In: Stochastic Environmental Research and Risk Assessment 32, pp. 1–22. DOI: 10.1007/s00477-017-1405-0.</li>
+                    <li>Johnson, Daniel P., Niranjan Ravi, and Christian V. Braneon (2021). “Spatiotemporal Associations Between Social Vulnerability, Environmental Measurements, and COVID-19 in the Conterminous United States”. In: GeoHealth 5.8. e2021GH000423 2021GH000423, e2021GH000423. DOI: https : / / doi . org / 10 . 1029 / 2021GH 000423.</li>
+                    <li>Knorr-Held L. Bayesian modelling of inseparable space-time variation in disease risk. Stat Med. 2000;19(17-18):2555-2567. doi:10.1002/1097-0258(20000915/30)19:17/18<2555::aid-sim587>3.0.co;2-#</li>
+                    <li> Moraga, Paula. (2019). <a href='https://www.paulamoraga.com/book-geospatial'><i> Geospatial Health Data: Modeling and Visualization with R-INLA and Shiny </i></a>. Chapman & Hall/CRC Biostatistics Series </li>
+                    <li>Nazia, Nushrat, Jane Law, and Zahid Butt (June 2022). “Identifying spatiotemporal patterns of COVID-19 transmissions and the drivers of the patterns in Toronto: a Bayesian hierarchical spatiotemporal modelling”. In: Scientific Reports 12, p. 9369. DOI: 10.1038/s41598-022-13403-x.</li>
+                    <li> Pressiat, Gillaume (2020). FRANCE | COVID <a href='https://guillaumepressiat.shinyapps.io/covidfrance/'>https://guillaumepressiat.shinyapps.io/covidfrance/</a> [Accessed at 05/10/2020]</li> 
+                    <li>Rue, Håvard, Sara Martino, and Nicolas Chopin (Apr. 2009). “Approximate Bayesian Inference for Latent Gaussian Models by Using Integrated Nested Laplace Approximations”. In: Journal of the Royal Statistical Society Series B 71, pp. 319–392. DOI: 10.1111/j.1467-9868.2008.00700.x.</li>
+                    <li>Sievert, Carson. Interactive Web-Based Data Visualization with R, plotly, and shiny. Chapman and Hall/CRC Florida, 2020.</li>
+                    <li>Simpson, Daniel P. et al. (2015). “Penalising model component complexity: A principled, practical approach to constructing priors”. In: arXiv: 1403.4630 [stat.ME].</li>
+                    <li>Ugarte, María Dolores, Aritz Adin, and Tomás Goicoa (2016). “Two-level spatially structured models in spatio-temporal disease mapping”. In: Statistical Methods in Medical Research 25.4. PMID: 27566767, pp. 1080–1100. DOI: 10.1177/0962280216660423.</li>
+                    <li>Wickham H, François R, Henry L, Müller K, Vaughan D (2023). _dplyr: A Grammar of Data Manipulation_. R package version 1.1.2,
+  <https://CRAN.R-project.org/package=dplyr></li>
+                    <li> Wickham H, Henry L (2023). _purrr: Functional Programming Tools_. R package version 1.0.1, <https://CRAN.R-project.org/package=purrr>.</li>
                     </ul>")
 )
 
