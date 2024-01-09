@@ -1,6 +1,6 @@
 # Bayesian spatio-temporal analysis of COVID-19 in Catalonia
 
-In this repository can be found all of the work related to the Pau Satorra's Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. 
+In this repository can be found all of the work related to the Pau Satorra's Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. It contains the data that is used for the manuscript "Bayesian spatio-temporal analysis of the COVID-19 pandemic in Catalonia".
 
 ## Abstract
 
