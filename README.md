@@ -1,10 +1,6 @@
 # Bayesian spatio-temporal analysis of COVID-19 in Catalonia
 
-In this repository can be found all of the work related to the Pau Satorra's Fundamental Principles of Data Science Master's Thesis of the University of Barcelona (UB) supervised by Dr. Cristian Tebé and Dra. Laura Igual. It contains the data that it was used in the manuscript under review "Bayesian spatio-temporal analysis of the COVID-19 pandemic in Catalonia".
-
-## Abstract
-
-In this study, we model the COVID-19 pandemic in the different basic health areas (ABS) in Catalonia, describing the spatial, temporal and spatio-temporal trends of reported COVID-19 cases and hospitalisations. As the ABS are small areas, spatio-temporal small area estimation methods have to be used, which allow us to borrow strength from neighbouring areas and time points. In particular, we use Bayesian hierarchical spatio-temporal models estimated with INLA, providing a very flexible and robust tool that allows the specification of a wide variety of different models, from which the best one is selected according to the model performance. Results are found to be heterogeneous and different hotspots and coldspots are identified both over the whole pandemic period and at different points in time. The analysis of the impact of some characteristics of the ABS shows that urban areas are at higher risk of COVID-19 cases and hospitalisations, while socio-economic deprivation of the area is a risk factor for hospitalisations. In addition, full vaccination coverage of an ABS is shown to have a protective effect on the risk of COVID-19 cases and hospitalisations in specific waves of the pandemic.
+In this repository can be found all of the work related to the manuscript under review "Bayesian spatio-temporal analysis of the COVID-19 pandemic in Catalonia", by Pau Satorra and Cristian Tebé.
 
 ## Content of this repository
 
