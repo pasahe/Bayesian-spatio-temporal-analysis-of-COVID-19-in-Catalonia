@@ -16,6 +16,11 @@ outcomeModuleUI <- function(id) {
     "hosp_spatial" ~ "Spatial RR "
   )
   
+  value_id <- case_when(
+    id %in% c("cas", "cas_sptemp", "cas_spatial") ~ ymd("2020-03-08"),
+    id %in% c("hosp", "hosp_sptemp", "hosp_spatial") ~ ymd("2020-05-03")
+  )
+  
   tabPanel(
     title_id,
     useShinyjs(),
@@ -42,7 +47,7 @@ outcomeModuleUI <- function(id) {
           "Evolution",
           min = ymd("2020-03-08"),
           max = ymd("2022-07-24"),
-          value = ymd("2020-03-08"),
+          value = value_id,
           step = 7,
           animate = animationOptions(interval = 1500)
         )
@@ -88,6 +93,29 @@ outcomeModule <- function(input, output, session, tab, outcome, dat_spatial, dat
   #Call module
   callModule(modModule, id = "mod", outcome = reactive(outcome()), res_model = res_model)
   
+  # output$ui_data <- renderUI({
+  #   if(!tab() %in% c("cas_spatial", "hosp_spatial")) {
+  #     tagList(
+  #       tags$div(
+  #         style = "margin-left:5%",
+  #         sliderInput(
+  #           session$ns("data"),
+  #           "Evolution",
+  #           min = ymd("2020-03-08"),
+  #           max = ymd("2022-07-24"),
+  #           value = ymd("2020-03-08"),
+  #           step = 7,
+  #           animate = animationOptions(interval = 1500)
+  #         )
+  #       ),
+  #       tags$div(
+  #         style = "margin-left:5%; font-style:italic",
+  #         textOutput(session$ns("wave"))
+  #       )
+  #     )
+  #   }
+  # })
+  
   output$ui_plot <- renderUI({
     if(!tab() %in% c("cas_spatial", "hosp_spatial")) {
       absolutePanel(
@@ -100,13 +128,13 @@ outcomeModule <- function(input, output, session, tab, outcome, dat_spatial, dat
   
   #Update start value if hospitalization or cases is selected
   observeEvent(tab(), {
-    if(tab() %in% c("cas", "cas_sptemp")) {
-      updateSliderInput(session, "data", label = "Evolution", value = ymd("2020-03-08"))
-    } else if(tab() %in% c("hosp", "hosp_sptemp")) {
-      updateSliderInput(session, "data", label = "Evolution", value = ymd("2020-05-03"))
-    } else {
-      updateSliderInput(session, "data", label = "All the period", value = ymd("2022-07-24"))
-    }
+    # if(tab() %in% c("cas", "cas_sptemp")) {
+    #   updateSliderInput(session, "data", label = "Evolution", value = ymd("2020-03-08"))
+    # } else if(tab() %in% c("hosp", "hosp_sptemp")) {
+    #   updateSliderInput(session, "data", label = "Evolution", value = ymd("2020-05-03"))
+    # } else {
+    #   updateSliderInput(session, "data", label = "All the period", value = ymd("2022-07-24"))
+    # }
     toggleState("data", condition = !tab() %in% c("cas_spatial", "hosp_spatial"))
   })
   
@@ -212,6 +240,51 @@ outcomeModule <- function(input, output, session, tab, outcome, dat_spatial, dat
 
   })
   
+  # output$plot_abs <- renderPlot({
+  #   
+  #   if(!is.null(input$abs)) {
+  #     
+  #     sdat_covar <- dat_covar %>% 
+  #       filter(abs == input$abs) %>% 
+  #       dplyr::select(poblacio_exempta_de_copagament_farmaceutic:hospitalitzacions_evitables) %>% 
+  #       mutate_all(log)
+  #     
+  #     max <- dat_covar %>% 
+  #       dplyr::select(poblacio_exempta_de_copagament_farmaceutic:hospitalitzacions_evitables) %>% 
+  #       mutate_all(log) %>% 
+  #       summarise_all(~max(.x)) 
+  #     
+  #     min <- dat_covar %>% 
+  #       dplyr::select(poblacio_exempta_de_copagament_farmaceutic:hospitalitzacions_evitables) %>% 
+  #       mutate_all(log) %>% 
+  #       summarise_all(~min(.x))
+  #     
+  #     zero <- dat_covar %>% 
+  #       dplyr::select(poblacio_exempta_de_copagament_farmaceutic:hospitalitzacions_evitables) %>% 
+  #       mutate_all(log) %>% 
+  #       summarise_all(~0)
+  #     
+  #     sdat_covar <- rbind(max, min, zero, sdat_covar)
+  #     
+      # names(sdat_covar) <- c("Pharmaceutical co-payment", "Income < 18k€", "Income > 100k€", "Manual employment", "Inadequate education", "Premature mortality", "Avoidable hospitalisations")
+  #     
+  #     colors_border = c("#abc1cf", "#8856A7")
+  #     colors_in = alpha(colors_border, 0.3)
+  #     
+  #     radarchart(sdat_covar, axistype=1, 
+  #                #Custom polygon
+  #                pcol = colors_border, pfcol= colors_in, plwd=4 , plty=1,
+  #                #Custom grid
+  #                cglcol="grey", cglty=1, axislabcol="grey", caxislabels=rep(NA, 5), cglwd=0.8,
+  #                #Custom labels
+  #                vlcex=0.7,
+  #                centerzero = TRUE
+  #     )
+  #     
+  #   }
+  #   
+  # })
+  
   output$table_abs <- renderDataTable({
     
     if(!is.null(input$abs)) {
@@ -301,6 +374,7 @@ outcomeModule <- function(input, output, session, tab, outcome, dat_spatial, dat
     req(input$data)
       
       data_inici <- dmy(c("25/02/2020","01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021"))
+      # data_fi <- dmy(c("04/07/2020","06/12/2020","14/03/2021","12/06/2021","01/11/2021","24/07/2022"))
       data_fi <- dmy(c("01/10/2020","07/12/2020","15/03/2021","13/06/2021","02/11/2021","01/08/2022"))
       
       wave <- tibble(data_inici, data_fi) %>% 
