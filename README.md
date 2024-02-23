@@ -1,6 +1,8 @@
 # Bayesian spatio-temporal analysis of COVID-19 in Catalonia
 
-In this repository can be found all of the work related to the manuscript under review "Bayesian spatio-temporal analysis of the COVID-19 pandemic in Catalonia", by Pau Satorra and Cristian Tebé.
+In this repository can be found all of the work related to the paper:
+
+Satorra, P., Tebé, C. Bayesian spatio-temporal analysis of the COVID-19 pandemic in Catalonia. Sci Rep 14, 4220 (2024). https://doi.org/10.1038/s41598-024-53527-w
 
 ## Content of this repository
 
@@ -33,7 +35,6 @@ To have the data that would be inside the *2_Analysed/* folder, *SAE.R* has to b
 ### Shiny application
 
 In the *COVIDCAT_Evo/* folder we can find all of the code for developing the R shiny application (https://brui.shinyapps.io/covidcat_evo/), which visualizes the results of the study.
-
 
 
 
